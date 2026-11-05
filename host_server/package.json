@@ -1,0 +1,27 @@
+{
+  "name": "nijo-pvt-host-server",
+  "version": "1.0.0",
+  "description": "NIJO PVT 4-in-1 Multi-Platform Web Application (PWA) & Sync Engine for Laptop Host, Mobile, and Smart TV",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.7.5"
+  },
+  "keywords": [
+    "cross-platform",
+    "pwa",
+    "file-sharing",
+    "clipboard-sync",
+    "notion-clone",
+    "malayalam-calendar",
+    "tv-remote"
+  ],
+  "author": "nijo",
+  "license": "MIT"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "NIJO PVT",
+  "description": "Private multi-surface workspace for Phone, Laptop, and TV. Today tasks, Malayalam calendar, Wi-Fi file sharing, and study teacher.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

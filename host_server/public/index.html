@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NIJO PVT - 4-in-1 Multi-Platform Workspace</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0B0F19">
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Socket.io Client -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            obsidian: '#0B0F19',
+            cardBg: '#161E2E',
+            cardVariant: '#1F2A3D',
+            brandBlue: '#0054A6',
+            brandCyan: '#00E5FF',
+            brandViolet: '#7C4DFF',
+            brandMint: '#00E676',
+            borderSteel: '#2B384E'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* D-pad Focus outline for Smart TV 10-foot UI */
+    .tv-mode :focus {
+      outline: 4px solid #00E5FF !important;
+      outline-offset: 4px;
+      transform: scale(1.02);
+      transition: all 0.15s ease-in-out;
+    }
+    .tv-focus:focus {
+      background-color: rgba(0, 229, 255, 0.25) !important;
+    }
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0B0F19; }
+    ::-webkit-scrollbar-thumb { background: #2B384E; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #00E5FF; }
+  </style>
+</head>
+<body class="bg-obsidian text-slate-100 font-sans min-h-screen flex flex-col antialiased selection:bg-brandCyan selection:text-black">
+
+  <!-- Top Universal Header & Sync Mesh Status -->
+  <header class="border-b border-borderSteel bg-cardBg/90 backdrop-blur sticky top-0 z-40 px-4 py-2.5">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <!-- Brand Logo </> and Privacy Badge -->
+      <div class="flex items-center space-x-3">
+        <div class="bg-brandCyan/15 border border-brandCyan text-brandCyan font-black text-sm px-2.5 py-1 rounded-lg">
+          &lt;/&gt;
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="font-bold text-base tracking-wide text-white">NIJO PVT</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-brandMint border border-brandMint/40">
+              <span class="w-1.5 h-1.5 rounded-full bg-brandMint animate-pulse mr-1.5"></span>
+              LIVE SYNC
+            </span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+              <i data-lucide="shield-check" class="w-3 h-3 mr-1 text-brandMint"></i>
+              Privacy locked
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 hidden sm:block">Laptop Master Host &bull; Mobile Phone &bull; Smart TV</p>
+        </div>
+      </div>
+
+      <!-- Device View Switcher (Auto or Forced UI Mode) -->
+      <div class="flex items-center space-x-2">
+        <div class="bg-cardVariant p-1 rounded-xl flex items-center space-x-1 border border-borderSteel text-xs">
+          <button id="viewBtnLaptop" onclick="switchView('laptop')" class="px-2.5 py-1 rounded-lg font-medium transition flex items-center space-x-1 bg-brandBlue text-white">
+            <i data-lucide="laptop" class="w-3.5 h-3.5"></i>
+            <span class="hidden md:inline">Laptop</span>
+          </button>
+          <button id="viewBtnMobile" onclick="switchView('mobile')" class="px-2.5 py-1 rounded-lg font-medium transition flex items-center space-x-1 text-slate-400 hover:text-white">
+            <i data-lucide="smartphone" class="w-3.5 h-3.5"></i>
+            <span class="hidden md:inline">Mobile</span>
+          </button>
+          <button id="viewBtnTv" onclick="switchView('tv')" class="px-2.5 py-1 rounded-lg font-medium transition flex items-center space-x-1 text-slate-400 hover:text-white">
+            <i data-lucide="tv" class="w-3.5 h-3.5"></i>
+            <span class="hidden md:inline">TV</span>
+          </button>
+        </div>
+
+        <!-- Custom AI Setting Trigger -->
+        <button onclick="toggleAiModal()" class="p-2 rounded-xl bg-cardVariant border border-borderSteel hover:border-brandCyan text-brandCyan transition flex items-center space-x-1.5 text-xs font-semibold">
+          <i data-lucide="bot" class="w-4 h-4"></i>
+          <span id="headerAiName" class="hidden sm:inline">Nijo Copilot</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main View Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 pb-24 md:pb-10">
+
+    <!-- ==================== TV VIEW (10-Foot UI, D-Pad Remote Driven) ==================== -->
+    <div id="tvViewContainer" class="hidden space-y-6">
+      <div class="bg-gradient-to-r from-cardBg via-cardVariant to-cardBg p-6 rounded-2xl border-2 border-brandCyan/40 shadow-2xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="text-3xl font-extrabold text-white flex items-center space-x-3">
+              <i data-lucide="tv" class="w-8 h-8 text-brandCyan"></i>
+              <span>Smart TV File &amp; Clipboard Receiver</span>
+            </h1>
+            <p class="text-base text-slate-300 mt-1">Controlled via D-Pad arrows and OK button &bull; Wi-Fi Port 3000</p>
+          </div>
+          <div class="bg-emerald-950 border border-brandMint text-brandMint px-4 py-2 rounded-xl text-sm font-bold flex items-center space-x-2">
+            <i data-lucide="wifi" class="w-5 h-5"></i>
+            <span>Connected to Laptop Host</span>
+          </div>
+        </div>
+
+        <!-- TV QuickShare Hero Beam Receiver Banner -->
+        <div class="mt-6 p-5 bg-cardBg/90 border-2 border-brandCyan/50 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+          <div class="flex items-center space-x-4">
+            <div class="w-14 h-14 rounded-2xl bg-brandCyan/20 text-brandCyan flex items-center justify-center border border-brandCyan">
+              <i data-lucide="radio" class="w-7 h-7 animate-pulse"></i>
+            </div>
+            <div>
+              <div class="flex items-center space-x-2">
+                <span class="text-sm font-semibold text-slate-300">TV QuickShare Receiver PIN:</span>
+                <span id="tvWebPin" class="text-2xl font-black text-brandCyan tracking-wider">849-201</span>
+                <button onclick="refreshTvPin()" class="text-xs text-slate-400 hover:text-white underline ml-2">Generate New</button>
+              </div>
+              <p class="text-xs text-brandMint mt-1 flex items-center space-x-1">
+                <span class="w-2 h-2 rounded-full bg-brandMint animate-ping mr-1"></span>
+                <span>Active 10-foot Listener: Ready to receive from Android Phone Quick Share or Windows Laptop</span>
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center space-x-2">
+            <span class="px-3 py-1.5 rounded-lg bg-emerald-950 text-brandMint border border-brandMint/40 text-xs font-bold">D-Pad Compatible</span>
+            <button onclick="simulateTvBeamReceive()" class="px-3.5 py-1.5 bg-brandCyan hover:bg-cyan-400 text-obsidian text-xs font-bold rounded-xl shadow">Test Beam Receive</button>
+          </div>
+        </div>
+
+        <!-- TV Big Action Tiles -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+          <button tabindex="1" onclick="pasteFromClipboard('tv')" class="tv-focus text-left p-6 bg-cardVariant hover:bg-slate-800 border-2 border-borderSteel hover:border-brandCyan rounded-2xl transition group focus:outline-none">
+            <div class="w-12 h-12 rounded-xl bg-brandCyan/20 text-brandCyan flex items-center justify-center mb-3">
+              <i data-lucide="clipboard-paste" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-xl font-bold text-white group-hover:text-brandCyan">Paste &amp; Receive to TV</h3>
+            <p class="text-sm text-slate-400 mt-1">Accept clipboard link, video URL, or document sent from Laptop/Mobile</p>
+          </button>
+
+          <button tabindex="2" onclick="triggerFileInput('all')" class="tv-focus text-left p-6 bg-cardVariant hover:bg-slate-800 border-2 border-borderSteel hover:border-brandViolet rounded-2xl transition group focus:outline-none">
+            <div class="w-12 h-12 rounded-xl bg-brandViolet/20 text-brandViolet flex items-center justify-center mb-3">
+              <i data-lucide="arrow-up-right" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-xl font-bold text-white group-hover:text-brandViolet">Send TV Log / Media</h3>
+            <p class="text-sm text-slate-400 mt-1">Transmit screen capture or file back to the Laptop central storage</p>
+          </button>
+        </div>
+      </div>
+
+      <!-- TV Shared Stream Feed -->
+      <div class="bg-cardBg p-6 rounded-2xl border border-borderSteel">
+        <h2 class="text-xl font-bold text-white mb-4 flex items-center space-x-2">
+          <i data-lucide="cast" class="w-5 h-5 text-brandCyan"></i>
+          <span>TV Broadcast Feed &amp; Pinned Items</span>
+        </h2>
+        <div id="tvStreamList" class="space-y-3">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== LAPTOP & MOBILE VIEW CONTAINER ==================== -->
+    <div id="standardViewContainer" class="space-y-6">
+
+      <!-- Navigation Tabs (Today, Calendar, Files, Study) -->
+      <div id="laptopNavTabs" class="flex border-b border-borderSteel space-x-4 mb-4">
+        <button onclick="setActiveTab('today')" id="tabBtnToday" class="pb-3 text-sm font-bold border-b-2 border-brandCyan text-brandCyan flex items-center space-x-1.5">
+          <i data-lucide="check-square" class="w-4 h-4"></i>
+          <span>Today &amp; Notion Tasks</span>
+        </button>
+        <button onclick="setActiveTab('calendar')" id="tabBtnCalendar" class="pb-3 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-white flex items-center space-x-1.5">
+          <i data-lucide="calendar" class="w-4 h-4"></i>
+          <span>Malayalam Calendar</span>
+        </button>
+        <button onclick="setActiveTab('files')" id="tabBtnFiles" class="pb-3 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-white flex items-center space-x-1.5">
+          <i data-lucide="share-2" class="w-4 h-4"></i>
+          <span>File &amp; Clipboard Sync</span>
+        </button>
+        <button onclick="setActiveTab('study')" id="tabBtnStudy" class="pb-3 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-white flex items-center space-x-1.5">
+          <i data-lucide="graduation-cap" class="w-4 h-4"></i>
+          <span>Study &amp; Syllabus</span>
+        </button>
+      </div>
+
+      <!-- ==================== TAB 1: NOTION-STYLE TASKS ==================== -->
+      <div id="tabContentToday" class="space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-white flex items-center space-x-2">
+              <i data-lucide="trello" class="w-5 h-5 text-brandCyan"></i>
+              <span>Workspace &amp; Notion-Lite Kanban</span>
+            </h2>
+            <p class="text-xs text-slate-400">Target tasks to specific devices (e.g. Pin to Smart TV screen)</p>
+          </div>
+          <button onclick="openNewTaskModal()" class="px-3.5 py-2 bg-brandCyan hover:bg-cyan-400 text-obsidian font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-lg transition">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span>New Task</span>
+          </button>
+        </div>
+
+        <!-- Kanban Columns -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- To-Do -->
+          <div class="bg-cardBg p-4 rounded-xl border border-borderSteel flex flex-col">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                <span>To-Do</span>
+              </span>
+              <span id="countTodo" class="text-xs px-2 py-0.5 rounded-full bg-cardVariant text-slate-400">0</span>
+            </div>
+            <div id="kanbanTodo" class="space-y-2.5 flex-1 min-h-[160px]">
+              <!-- Task cards -->
+            </div>
+          </div>
+
+          <!-- In-Progress -->
+          <div class="bg-cardBg p-4 rounded-xl border border-borderSteel flex flex-col">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-brandCyan"></span>
+                <span>In Progress</span>
+              </span>
+              <span id="countInProgress" class="text-xs px-2 py-0.5 rounded-full bg-cardVariant text-slate-400">0</span>
+            </div>
+            <div id="kanbanInProgress" class="space-y-2.5 flex-1 min-h-[160px]">
+              <!-- Task cards -->
+            </div>
+          </div>
+
+          <!-- Completed -->
+          <div class="bg-cardBg p-4 rounded-xl border border-borderSteel flex flex-col">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-brandMint"></span>
+                <span>Completed</span>
+              </span>
+              <span id="countCompleted" class="text-xs px-2 py-0.5 rounded-full bg-cardVariant text-slate-400">0</span>
+            </div>
+            <div id="kanbanCompleted" class="space-y-2.5 flex-1 min-h-[160px]">
+              <!-- Task cards -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== TAB 2: MATHRUBHUMI MALAYALAM CALENDAR ==================== -->
+      <div id="tabContentCalendar" class="hidden space-y-6">
+        <div class="bg-cardBg p-5 rounded-2xl border border-borderSteel">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 class="text-xl font-bold text-white flex items-center space-x-2">
+                <i data-lucide="calendar" class="w-5 h-5 text-brandCyan"></i>
+                <span>Mathrubhumi Malayalam Panchangam</span>
+              </h2>
+              <p class="text-xs text-slate-400">Kollavarsham 1202 &bull; Nakshatram, Tithi, Rahu Kalam &amp; Kerala Festivals</p>
+            </div>
+            <div class="flex items-center space-x-2 text-xs">
+              <button onclick="shiftMonth(-1)" class="p-2 rounded-lg bg-cardVariant hover:bg-slate-700 text-brandCyan border border-borderSteel">
+                <i data-lucide="chevron-left" class="w-4 h-4"></i>
+              </button>
+              <span id="calHeaderLabel" class="font-bold text-sm text-white px-3">November 2026</span>
+              <button onclick="shiftMonth(1)" class="p-2 rounded-lg bg-cardVariant hover:bg-slate-700 text-brandCyan border border-borderSteel">
+                <i data-lucide="chevron-right" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Active Day Highlight Card (Mathrubhumi Details) -->
+          <div id="calendarDayHero" class="bg-cardVariant p-4 rounded-xl border border-brandCyan/40 mb-4 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <span class="text-xs font-bold text-brandCyan uppercase tracking-wide">Selected Date</span>
+              <h3 id="heroDateTitle" class="text-lg font-extrabold text-white">Sunday, 01 Nov 2026</h3>
+              <p id="heroMalayalamTitle" class="text-sm font-semibold text-brandCyan">1202 തുലാം 15 (Thulam 15)</p>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+              <div class="bg-obsidian/70 p-2 rounded-lg border border-borderSteel">
+                <span class="text-[10px] text-slate-400 uppercase">Nakshatram</span>
+                <p id="heroNakshatram" class="font-bold text-white">അശ്വതി (Aswathi)</p>
+              </div>
+              <div class="bg-obsidian/70 p-2 rounded-lg border border-borderSteel">
+                <span class="text-[10px] text-slate-400 uppercase">Rahu Kalam</span>
+                <p id="heroRahuKalam" class="font-bold text-amber-400">4:30 PM - 6:00 PM</p>
+              </div>
+              <div class="bg-obsidian/70 p-2 rounded-lg border border-borderSteel col-span-2 sm:col-span-1">
+                <span class="text-[10px] text-slate-400 uppercase">Festival / Observance</span>
+                <p id="heroFestival" class="font-bold text-brandMint">കേരളപ്പിറവി / Kerala Piravi</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Calendar Grid Days Header -->
+          <div class="grid grid-cols-7 gap-1 text-center text-xs font-bold text-slate-400 uppercase mb-2">
+            <span class="text-red-400">Sun</span>
+            <span>Mon</span>
+            <span>Tue</span>
+            <span>Wed</span>
+            <span>Thu</span>
+            <span>Fri</span>
+            <span>Sat</span>
+          </div>
+
+          <!-- Days Grid -->
+          <div id="calendarGrid" class="grid grid-cols-7 gap-1.5 text-xs">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== TAB 3: FILE & UNIVERSAL CLIPBOARD SYNC ==================== -->
+      <div id="tabContentFiles" class="hidden space-y-6">
+
+        <!-- NIJO QuickShare & Mobile Hotspot Direct Hub -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Windows Quick Share & TV Beam Box -->
+          <div class="bg-cardBg p-5 rounded-2xl border-2 border-brandCyan/40 shadow-lg">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center space-x-2">
+                <div class="w-8 h-8 rounded-lg bg-brandCyan/20 text-brandCyan flex items-center justify-center">
+                  <i data-lucide="radio" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h3 class="font-bold text-white text-sm">Windows Quick Share &amp; TV Beam</h3>
+                  <p class="text-[11px] text-slate-400">Beam files directly to 42" TV screen or nearby PC</p>
+                </div>
+              </div>
+              <button onclick="triggerWindowsQuickShare()" class="px-2.5 py-1 bg-cardVariant hover:bg-slate-700 text-brandCyan border border-brandCyan/40 rounded-lg text-xs font-semibold flex items-center space-x-1">
+                <i data-lucide="share" class="w-3.5 h-3.5"></i>
+                <span>Windows Share</span>
+              </button>
+            </div>
+
+            <!-- PIN input & Direct Beam -->
+            <div class="space-y-2 mt-3">
+              <div class="flex items-center space-x-2">
+                <input id="beamTvPinInput" type="text" value="849-201" placeholder="Enter TV PIN (e.g. 849-201)" class="w-32 bg-cardVariant border border-borderSteel rounded-xl px-3 py-2 text-xs text-brandCyan font-bold text-center focus:outline-none focus:border-brandCyan">
+                <input id="beamFilenameInput" type="text" placeholder="File to beam (e.g. syllabus_sem1.pdf)" class="flex-1 bg-cardVariant border border-borderSteel rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brandCyan">
+                <button onclick="beamFileToTv()" class="px-3 py-2 bg-brandCyan hover:bg-cyan-400 text-obsidian font-bold text-xs rounded-xl shadow transition">Beam TV</button>
+              </div>
+              <p class="text-[10px] text-slate-400">Enters TV Beam code to display on TV screen without Bluetooth or HDMI</p>
+            </div>
+          </div>
+
+          <!-- Mobile Hotspot Direct Mode (For Traveling Outside without Home Wi-Fi) -->
+          <div class="bg-cardBg p-5 rounded-2xl border-2 border-brandMint/40 shadow-lg">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center space-x-2">
+                <div class="w-8 h-8 rounded-lg bg-brandMint/20 text-brandMint flex items-center justify-center">
+                  <i data-lucide="wifi" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h3 class="font-bold text-white text-sm">Mobile Hotspot Direct Mode</h3>
+                  <p class="text-[11px] text-brandMint">യാത്രകളിൽ ഇന്റർനെറ്റ് ഇല്ലാതെ നേരിട്ട് കണക്ട് ചെയ്യാം</p>
+                </div>
+              </div>
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-brandMint border border-brandMint/40">192.168.43.1:3000</span>
+            </div>
+
+            <div class="bg-cardVariant p-2.5 rounded-xl text-[11px] text-slate-300 space-y-1">
+              <p><span class="font-bold text-brandMint">1.</span> ഫോണിൽ Portable Hotspot ഓൺ ചെയ്യുക.</p>
+              <p><span class="font-bold text-brandMint">2.</span> ലാപ്ടോപ്പ് ഫോണിന്റെ Wi-Fi നെറ്റ്‌വർക്കിലേക്ക് കണക്ട് ചെയ്യുക.</p>
+              <p><span class="font-bold text-brandMint">3.</span> ബ്രൗസറിൽ <code class="text-brandCyan font-mono">http://192.168.43.1:3000</code> തുറക്കുക.</p>
+              <p class="text-[10px] text-slate-400 mt-1">ഡാറ്റ ചെലവില്ലാതെ ഫയൽസും ക്ലിപ്പ്ബോർഡും ഓഫ്‌ലൈനായി അതിവേഗം ഷെയർ ചെയ്യാം!</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Universal Clipboard Quick Control Panel -->
+        <div class="bg-cardBg p-5 rounded-2xl border border-borderSteel">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 class="text-xl font-bold text-white flex items-center space-x-2">
+                <i data-lucide="clipboard" class="w-5 h-5 text-brandCyan"></i>
+                <span>Universal Clipboard (Ctrl+C / Ctrl+V Sync)</span>
+              </h2>
+              <p class="text-xs text-slate-400">Press Ctrl+V anywhere in app or paste below to broadcast instantly</p>
+            </div>
+
+            <!-- Target Device Selector -->
+            <div class="flex items-center space-x-2 text-xs">
+              <span class="text-slate-400 font-medium">Route to:</span>
+              <select id="clipboardTargetSelect" class="bg-cardVariant border border-borderSteel text-brandCyan font-semibold rounded-lg px-2.5 py-1.5 focus:outline-none">
+                <option value="all">Send to All Devices</option>
+                <option value="tv">Send to Smart TV</option>
+                <option value="mobile">Send to Mobile Phone</option>
+                <option value="laptop">Send to Laptop Host</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Quick Paste Input Bar -->
+          <div class="flex items-center space-x-2">
+            <input id="quickClipboardInput" type="text" placeholder="Type or paste text, links, or notes to push..." class="flex-1 bg-cardVariant border border-borderSteel rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brandCyan">
+            <button onclick="pushClipboardInput()" class="px-4 py-2.5 bg-brandCyan hover:bg-cyan-400 text-obsidian font-bold text-xs rounded-xl flex items-center space-x-1.5 transition">
+              <i data-lucide="send" class="w-4 h-4"></i>
+              <span>Push</span>
+            </button>
+            <button onclick="readDeviceClipboard()" class="px-3.5 py-2.5 bg-cardVariant hover:bg-slate-700 text-slate-200 border border-borderSteel font-semibold text-xs rounded-xl flex items-center space-x-1.5 transition">
+              <i data-lucide="clipboard-paste" class="w-4 h-4 text-brandCyan"></i>
+              <span class="hidden sm:inline">Paste from Clipboard</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Drag & Drop High-Speed File Hub -->
+        <div class="bg-cardBg p-5 rounded-2xl border border-borderSteel">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-lg font-bold text-white flex items-center space-x-2">
+                <i data-lucide="folder-sync" class="w-5 h-5 text-brandViolet"></i>
+                <span>High-Speed File Transfer Hub</span>
+              </h3>
+              <p class="text-xs text-slate-400">Documents, Syllabus PDFs, Media &amp; APKs (LAN &amp; Cloud)</p>
+            </div>
+            <div id="transferSpeedBadge" class="hidden text-xs bg-brandMint/10 border border-brandMint text-brandMint px-2.5 py-1 rounded-lg font-bold">
+              Speed: 42.8 MB/s
+            </div>
+          </div>
+
+          <!-- Dropzone -->
+          <div id="fileDropZone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" class="border-2 border-dashed border-borderSteel hover:border-brandCyan bg-cardVariant/50 rounded-2xl p-8 text-center cursor-pointer transition">
+            <input type="file" id="fileUploadInput" onchange="uploadSelectedFile(event)" class="hidden">
+            <div class="flex flex-col items-center justify-center space-y-3">
+              <div class="w-14 h-14 rounded-2xl bg-brandCyan/15 text-brandCyan flex items-center justify-center">
+                <i data-lucide="upload-cloud" class="w-7 h-7"></i>
+              </div>
+              <p class="text-sm font-bold text-white">Drag &amp; Drop files here or <span class="text-brandCyan underline">browse</span></p>
+              <p class="text-xs text-slate-400">Zero-latency over home Wi-Fi &bull; SHA-256 integrity check</p>
+            </div>
+          </div>
+
+          <!-- Upload Progress Bar -->
+          <div id="uploadProgressBarContainer" class="hidden mt-4 space-y-1">
+            <div class="flex justify-between text-xs text-slate-300">
+              <span id="uploadProgressFilename">Uploading...</span>
+              <span id="uploadProgressPercent">0%</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+              <div id="uploadProgressBar" class="bg-brandCyan h-2 rounded-full transition-all duration-150" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <!-- Shared Files Table/List -->
+          <div class="mt-6">
+            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Recent File Transfers</h4>
+            <div id="sharedFilesList" class="space-y-2">
+              <!-- Files populated dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Universal Clipboard History Feed -->
+        <div class="bg-cardBg p-5 rounded-2xl border border-borderSteel">
+          <h3 class="text-lg font-bold text-white flex items-center space-x-2 mb-3">
+            <i data-lucide="history" class="w-5 h-5 text-brandCyan"></i>
+            <span>Live Shared Clipboard Feed</span>
+          </h3>
+          <div id="clipboardFeed" class="space-y-2.5">
+            <!-- Clipboard items -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== TAB 4: STUDY & SYLLABUS HARVESTER ==================== -->
+      <div id="tabContentStudy" class="hidden space-y-6">
+        <div class="bg-cardBg p-5 rounded-2xl border border-borderSteel">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="text-xl font-bold text-white flex items-center space-x-2">
+                <i data-lucide="graduation-cap" class="w-5 h-5 text-brandViolet"></i>
+                <span>Syllabus Harvester &amp; Tuition Assistant</span>
+              </h2>
+              <p class="text-xs text-slate-400">Polytechnic AI&amp;ML Semester 1 &bull; Local concept cards &amp; ranked passages</p>
+            </div>
+            <span class="px-2.5 py-1 rounded-lg bg-brandViolet/20 border border-brandViolet text-brandViolet font-bold text-xs">
+              Aim 3 Teacher
+            </span>
+          </div>
+
+          <!-- Subject Filter Chips -->
+          <div class="flex flex-wrap gap-2 mb-4">
+            <button onclick="filterStudySubject('Python & AI')" class="study-chip px-3 py-1.5 rounded-lg bg-brandCyan/20 text-brandCyan border border-brandCyan text-xs font-semibold">Python &amp; AI</button>
+            <button onclick="filterStudySubject('Applied Physics')" class="study-chip px-3 py-1.5 rounded-lg bg-cardVariant text-slate-400 border border-borderSteel text-xs font-semibold">Applied Physics</button>
+            <button onclick="filterStudySubject('Digital Electronics')" class="study-chip px-3 py-1.5 rounded-lg bg-cardVariant text-slate-400 border border-borderSteel text-xs font-semibold">Digital Electronics</button>
+            <button onclick="filterStudySubject('Mathematics I')" class="study-chip px-3 py-1.5 rounded-lg bg-cardVariant text-slate-400 border border-borderSteel text-xs font-semibold">Mathematics I</button>
+          </div>
+
+          <!-- Topic List -->
+          <div id="studyTopicsList" class="space-y-3">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Mobile Bottom Tab Bar (Visible in Mobile View) -->
+  <nav id="mobileBottomNav" class="hidden fixed bottom-0 left-0 right-0 bg-cardBg/95 backdrop-blur border-t border-borderSteel z-40 py-2 px-4 flex justify-around">
+    <button onclick="setActiveTab('today')" class="mobile-nav-btn text-brandCyan flex flex-col items-center">
+      <i data-lucide="check-square" class="w-5 h-5"></i>
+      <span class="text-[10px] mt-0.5 font-bold">Today</span>
+    </button>
+    <button onclick="setActiveTab('calendar')" class="mobile-nav-btn text-slate-400 flex flex-col items-center">
+      <i data-lucide="calendar" class="w-5 h-5"></i>
+      <span class="text-[10px] mt-0.5">Calendar</span>
+    </button>
+    <button onclick="setActiveTab('files')" class="mobile-nav-btn text-slate-400 flex flex-col items-center">
+      <i data-lucide="share-2" class="w-5 h-5"></i>
+      <span class="text-[10px] mt-0.5">Files</span>
+    </button>
+    <button onclick="setActiveTab('study')" class="mobile-nav-btn text-slate-400 flex flex-col items-center">
+      <i data-lucide="graduation-cap" class="w-5 h-5"></i>
+      <span class="text-[10px] mt-0.5">Study</span>
+    </button>
+  </nav>
+
+  <!-- ==================== FLOATING CUSTOM-NAMED AI WIDGET ==================== -->
+  <div class="fixed bottom-6 right-6 z-50">
+    <button onclick="toggleAiModal()" class="flex items-center space-x-2 px-4 py-3 bg-cardBg hover:bg-slate-800 border-2 border-brandCyan rounded-full shadow-2xl text-brandCyan font-bold text-xs transition transform hover:scale-105">
+      <i data-lucide="sparkles" class="w-4 h-4 text-brandCyan animate-spin" style="animation-duration: 4s;"></i>
+      <span id="floatingAiName">Nijo Copilot</span>
+    </button>
+  </div>
+
+  <!-- AI Modal Dialog -->
+  <div id="aiModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-cardBg border border-borderSteel w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+      <!-- AI Header & Custom Name Renaming Input -->
+      <div class="p-4 border-b border-borderSteel flex items-center justify-between bg-cardVariant/70">
+        <div class="flex items-center space-x-3">
+          <div class="w-9 h-9 rounded-full bg-brandCyan/20 text-brandCyan flex items-center justify-center">
+            <i data-lucide="bot" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-1.5">
+              <input id="aiCustomNameInput" type="text" value="Nijo Copilot" class="bg-transparent border-b border-dashed border-slate-500 font-bold text-sm text-white focus:outline-none focus:border-brandCyan w-36">
+              <button onclick="saveAiName()" title="Save Name" class="text-xs text-brandCyan hover:underline font-semibold">Save</button>
+            </div>
+            <p class="text-[10px] text-brandMint font-medium">Synced across Laptop, Phone &amp; TV</p>
+          </div>
+        </div>
+        <button onclick="toggleAiModal()" class="p-1 rounded-lg text-slate-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- AI Chat Messages Feed -->
+      <div id="aiChatFeed" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
+        <div class="bg-cardVariant p-3 rounded-xl border border-borderSteel max-w-[85%]">
+          <p class="font-bold text-brandCyan mb-1" id="aiGreetingHeader">Nijo Copilot</p>
+          <p class="text-slate-200">Hello! I am active and context-aware of your Kanban tasks, Malayalam calendar events, and shared files across devices. How can I help?</p>
+        </div>
+      </div>
+
+      <!-- Quick Action Commands -->
+      <div class="px-4 py-2 bg-obsidian/70 border-t border-borderSteel flex flex-wrap gap-1.5">
+        <button onclick="aiQuickPrompt('Paste last copied link to the TV')" class="px-2.5 py-1 rounded bg-cardVariant hover:bg-slate-700 text-brandCyan text-[11px] font-semibold border border-borderSteel">Paste link to TV</button>
+        <button onclick="aiQuickPrompt('What is today in Malayalam calendar?')" class="px-2.5 py-1 rounded bg-cardVariant hover:bg-slate-700 text-brandCyan text-[11px] font-semibold border border-borderSteel">Today's Star &amp; Festival</button>
+        <button onclick="aiQuickPrompt('Add task: Study AI Unit 1 tonight')" class="px-2.5 py-1 rounded bg-cardVariant hover:bg-slate-700 text-brandCyan text-[11px] font-semibold border border-borderSteel">Schedule study task</button>
+      </div>
+
+      <!-- Input Bar -->
+      <div class="p-3 border-t border-borderSteel flex items-center space-x-2">
+        <input id="aiPromptInput" type="text" onkeydown="if(event.key==='Enter') sendAiPrompt()" placeholder="Ask your agent or issue a multi-device command..." class="flex-1 bg-cardVariant border border-borderSteel rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-brandCyan">
+        <button onclick="sendAiPrompt()" class="p-2 bg-brandCyan hover:bg-cyan-400 text-obsidian rounded-xl transition">
+          <i data-lucide="send" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Task Modal -->
+  <div id="taskModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-cardBg border border-borderSteel w-full max-w-md rounded-2xl p-5 shadow-2xl">
+      <h3 class="text-base font-bold text-white mb-3 flex items-center space-x-2">
+        <i data-lucide="plus-circle" class="w-4 h-4 text-brandCyan"></i>
+        <span>Create Workspace Task</span>
+      </h3>
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-slate-400 mb-1">Task Title</label>
+          <input id="taskTitleInput" type="text" placeholder="e.g. Complete Engineering Graphics Sheet 2" class="w-full bg-cardVariant border border-borderSteel rounded-lg px-3 py-2 text-white focus:outline-none focus:border-brandCyan">
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">Notes / Description</label>
+          <textarea id="taskNotesInput" rows="2" placeholder="Sub-tasks or reference links..." class="w-full bg-cardVariant border border-borderSteel rounded-lg px-3 py-2 text-white focus:outline-none focus:border-brandCyan"></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-slate-400 mb-1">Priority</label>
+            <select id="taskPrioritySelect" class="w-full bg-cardVariant border border-borderSteel rounded-lg px-2.5 py-2 text-white focus:outline-none">
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">Target Device</label>
+            <select id="taskTargetSelect" class="w-full bg-cardVariant border border-borderSteel rounded-lg px-2.5 py-2 text-white focus:outline-none">
+              <option value="all">All Devices</option>
+              <option value="tv">Pin to Smart TV</option>
+              <option value="mobile">Mobile Only</option>
+              <option value="laptop">Laptop Only</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="mt-4 flex justify-end space-x-2">
+        <button onclick="closeNewTaskModal()" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white text-xs">Cancel</button>
+        <button onclick="saveNewTask()" class="px-4 py-1.5 bg-brandCyan hover:bg-cyan-400 text-obsidian font-bold text-xs rounded-lg">Save Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- APPLICATION LOGIC & REAL-TIME WEBSOCKET HANDLERS -->
+  <script>
+    // State initialization
+    let currentViewMode = 'laptop';
+    let currentTab = 'today';
+    let appState = {
+      aiName: 'Nijo Copilot',
+      tasks: [],
+      clipboardHistory: [],
+      files: []
+    };
+    let calendarMonthOffset = 0; // Relative to Nov 2026
+
+    // Connect to WebSocket Server (Host Laptop)
+    const socket = io();
+
+    socket.on('connect', () => {
+      console.log('[*] Connected to Laptop Host Server:', socket.id);
+      socket.emit('device:register', {
+        id: socket.id,
+        type: currentViewMode,
+        name: `${currentViewMode.toUpperCase()} Client`
+      });
+    });
+
+    socket.on('state:sync', (data) => {
+      appState.aiName = data.aiName || 'Nijo Copilot';
+      appState.tasks = data.tasks || [];
+      appState.clipboardHistory = data.clipboardHistory || [];
+      appState.files = data.files || [];
+      updateUiElements();
+    });
+
+    socket.on('clipboard:new', (item) => {
+      appState.clipboardHistory.unshift(item);
+      renderClipboardFeed();
+      renderTvStream();
+    });
+
+    socket.on('task:added', (task) => {
+      appState.tasks.unshift(task);
+      renderKanban();
+      renderTvStream();
+    });
+
+    socket.on('task:updated', (updated) => {
+      const idx = appState.tasks.findIndex(t => t.id === updated.id);
+      if (idx !== -1) appState.tasks[idx] = updated;
+      renderKanban();
+      renderTvStream();
+    });
+
+    socket.on('task:deleted', (taskId) => {
+      appState.tasks = appState.tasks.filter(t => t.id !== taskId);
+      renderKanban();
+      renderTvStream();
+    });
+
+    socket.on('file:added', (file) => {
+      appState.files.unshift(file);
+      renderFiles();
+      renderTvStream();
+    });
+
+    socket.on('ai:renamed', (newName) => {
+      appState.aiName = newName;
+      updateAiNameUi();
+    });
+
+    // ==================== GLOBAL UNIVERSAL CLIPBOARD HANDLER (Ctrl+C / Ctrl+V) ====================
+    document.addEventListener('paste', async (event) => {
+      // Avoid intercepting input/textarea paste
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+
+      event.preventDefault();
+      const clipboardData = event.clipboardData || window.clipboardData;
+      const text = clipboardData.getData('text');
+
+      if (text) {
+        pushClipboardContent(text);
+      } else if (clipboardData.files && clipboardData.files.length > 0) {
+        uploadFileDirectly(clipboardData.files[0]);
+      }
+    });
+
+    function pushClipboardContent(content) {
+      const target = document.getElementById('clipboardTargetSelect').value;
+      const payload = {
+        content: content,
+        type: content.startsWith('http') ? 'url' : 'text',
+        target: target,
+        sender: currentViewMode
+      };
+      socket.emit('clipboard:push', payload);
+      showNotificationToast(`Pushed to ${target.toUpperCase()}: ${content.substring(0, 30)}...`);
+    }
+
+    function pushClipboardInput() {
+      const input = document.getElementById('quickClipboardInput');
+      if (input.value.trim()) {
+        pushClipboardContent(input.value.trim());
+        input.value = '';
+      }
+    }
+
+    async function readDeviceClipboard() {
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            pushClipboardContent(text);
+          }
+        } else {
+          alert('Clipboard API permission required or not supported in this browser context.');
+        }
+      } catch (err) {
+        console.warn('Clipboard read failed:', err);
+      }
+    }
+
+    // ==================== FILE DRAG & DROP AND STREAMING ====================
+    const dropZone = document.getElementById('fileDropZone');
+
+    dropZone.addEventListener('click', () => {
+      document.getElementById('fileUploadInput').click();
+    });
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      dropZone.classList.add('border-brandCyan', 'bg-cardVariant');
+    }
+
+    function handleDragLeave(e) {
+      e.preventDefault();
+      dropZone.classList.remove('border-brandCyan', 'bg-cardVariant');
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      dropZone.classList.remove('border-brandCyan', 'bg-cardVariant');
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        uploadFileDirectly(e.dataTransfer.files[0]);
+      }
+    }
+
+    function uploadSelectedFile(e) {
+      if (e.target.files && e.target.files.length > 0) {
+        uploadFileDirectly(e.target.files[0]);
+      }
+    }
+
+    function normalizeUploadHost(raw) {
+      if (!raw) return '192.168.1.2:4000';
+      let s = raw.trim().replace(/^https?:\/\//i, '').replace(/^[/\s]+/, '').replace(/[/,\s]+$/, '');
+      s = s.replace(/\s+/g, '');
+      s = s.split('/')[0].trim();
+      if (!s.includes(':')) s += ':4000';
+      return s;
+    }
+
+    function getFullUploadUrl() {
+      const hostInput = document.getElementById('mobileHostIpInput') || document.querySelector('input[placeholder*="192.168"]');
+      const saved = (hostInput && hostInput.value.trim()) || localStorage.getItem('saved_host_ip');
+      // If served over HTTPS, avoid Mixed Content blocking by using relative /upload endpoint
+      if (window.location.protocol === 'https:') {
+        return '/upload';
+      }
+      if (saved) {
+        return `http://${normalizeUploadHost(saved)}/upload`;
+      }
+      return '/upload';
+    }
+
+    function uploadFileDirectly(file) {
+      const target = document.getElementById('clipboardTargetSelect').value;
+      const progressContainer = document.getElementById('uploadProgressBarContainer');
+      const progressBar = document.getElementById('uploadProgressBar');
+      const progressFilename = document.getElementById('uploadProgressFilename');
+      const progressPercent = document.getElementById('uploadProgressPercent');
+      const speedBadge = document.getElementById('transferSpeedBadge');
+
+      progressContainer.classList.remove('hidden');
+      speedBadge.classList.remove('hidden');
+      progressFilename.textContent = file.name;
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('sender', currentViewMode);
+      formData.append('target', target);
+
+      const targetUrl = getFullUploadUrl();
+
+      // Send via modern fetch with XHR fallback for progress
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', targetUrl, true);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          progressBar.style.width = percent + '%';
+          progressPercent.textContent = percent + '%';
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 400) {
+          console.log('[*] Upload successful to', targetUrl);
+        } else {
+          // Fallback to local /api/upload if custom host was rejected
+          if (targetUrl !== '/api/upload' && targetUrl !== '/upload') {
+            const fallbackXhr = new XMLHttpRequest();
+            fallbackXhr.open('POST', '/api/upload', true);
+            fallbackXhr.send(formData);
+          }
+        }
+        setTimeout(() => {
+          progressContainer.classList.add('hidden');
+          speedBadge.classList.add('hidden');
+          progressBar.style.width = '0%';
+        }, 1200);
+      };
+
+      xhr.onerror = () => {
+        // Fallback to local /upload endpoint
+        if (targetUrl !== '/upload' && targetUrl !== '/api/upload') {
+          const fallbackXhr = new XMLHttpRequest();
+          fallbackXhr.open('POST', '/upload', true);
+          fallbackXhr.send(formData);
+        }
+      };
+
+      xhr.send(formData);
+    }
+
+    // ==================== VIEW MODES (Laptop, Mobile, TV) ====================
+    function switchView(mode) {
+      currentViewMode = mode;
+      document.body.classList.toggle('tv-mode', mode === 'tv');
+
+      // Update button highlights
+      ['Laptop', 'Mobile', 'Tv'].forEach(m => {
+        const btn = document.getElementById(`viewBtn${m}`);
+        if (m.toLowerCase() === mode) {
+          btn.className = 'px-2.5 py-1 rounded-lg font-medium transition flex items-center space-x-1 bg-brandBlue text-white';
+        } else {
+          btn.className = 'px-2.5 py-1 rounded-lg font-medium transition flex items-center space-x-1 text-slate-400 hover:text-white';
+        }
+      });
+
+      const tvContainer = document.getElementById('tvViewContainer');
+      const stdContainer = document.getElementById('standardViewContainer');
+      const mobileNav = document.getElementById('mobileBottomNav');
+      const laptopTabs = document.getElementById('laptopNavTabs');
+
+      if (mode === 'tv') {
+        tvContainer.classList.remove('hidden');
+        stdContainer.classList.add('hidden');
+        mobileNav.classList.add('hidden');
+      } else if (mode === 'mobile') {
+        tvContainer.classList.add('hidden');
+        stdContainer.classList.remove('hidden');
+        mobileNav.classList.remove('hidden');
+        laptopTabs.classList.add('hidden');
+      } else {
+        // Laptop view
+        tvContainer.classList.add('hidden');
+        stdContainer.classList.remove('hidden');
+        mobileNav.classList.add('hidden');
+        laptopTabs.classList.remove('hidden');
+      }
+
+      // Re-register device type over socket
+      if (socket.connected) {
+        socket.emit('device:register', {
+          id: socket.id,
+          type: mode,
+          name: `${mode.toUpperCase()} Client`
+        });
+      }
+    }
+
+    // ==================== TABS (Today, Calendar, Files, Study) ====================
+    function setActiveTab(tab) {
+      currentTab = tab;
+      ['today', 'calendar', 'files', 'study'].forEach(t => {
+        const content = document.getElementById(`tabContent${capitalize(t)}`);
+        const btn = document.getElementById(`tabBtn${capitalize(t)}`);
+        if (t === tab) {
+          content.classList.remove('hidden');
+          if (btn) btn.className = 'pb-3 text-sm font-bold border-b-2 border-brandCyan text-brandCyan flex items-center space-x-1.5';
+        } else {
+          content.classList.add('hidden');
+          if (btn) btn.className = 'pb-3 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-white flex items-center space-x-1.5';
+        }
+      });
+      lucide.createIcons();
+    }
+
+    // ==================== KANBAN BOARD RENDERER ====================
+    function renderKanban() {
+      const todoContainer = document.getElementById('kanbanTodo');
+      const inProgContainer = document.getElementById('kanbanInProgress');
+      const doneContainer = document.getElementById('kanbanCompleted');
+
+      todoContainer.innerHTML = '';
+      inProgContainer.innerHTML = '';
+      doneContainer.innerHTML = '';
+
+      let todoCount = 0, inProgCount = 0, doneCount = 0;
+
+      appState.tasks.forEach(task => {
+        const card = document.createElement('div');
+        card.className = 'bg-cardVariant p-3 rounded-xl border border-borderSteel hover:border-brandCyan/50 transition';
+        card.innerHTML = `
+          <div class="flex items-start justify-between">
+            <h4 class="font-bold text-xs text-white">${escapeHtml(task.title)}</h4>
+            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 ${task.priority === 'high' ? 'text-red-400' : 'text-brandCyan'}">${task.priority.toUpperCase()}</span>
+          </div>
+          ${task.notes ? `<p class="text-[11px] text-slate-400 mt-1">${escapeHtml(task.notes)}</p>` : ''}
+          <div class="mt-2.5 pt-2 border-t border-borderSteel flex items-center justify-between text-[10px]">
+            <span class="text-brandMint flex items-center space-x-1">
+              <i data-lucide="tag" class="w-3 h-3"></i>
+              <span>${task.targetDevice.toUpperCase()}</span>
+            </span>
+            <div class="flex space-x-1">
+              ${task.status !== 'todo' ? `<button onclick="updateTaskStatus('${task.id}', 'todo')" class="text-slate-400 hover:text-white">&larr;</button>` : ''}
+              ${task.status !== 'completed' ? `<button onclick="updateTaskStatus('${task.id}', 'completed')" class="text-brandMint hover:underline font-semibold">&check; Done</button>` : ''}
+              ${task.status !== 'in-progress' && task.status !== 'completed' ? `<button onclick="updateTaskStatus('${task.id}', 'in-progress')" class="text-brandCyan hover:underline font-semibold">&rarr;</button>` : ''}
+            </div>
+          </div>
+        `;
+
+        if (task.status === 'todo') {
+          todoContainer.appendChild(card);
+          todoCount++;
+        } else if (task.status === 'in-progress') {
+          inProgContainer.appendChild(card);
+          inProgCount++;
+        } else {
+          doneContainer.appendChild(card);
+          doneCount++;
+        }
+      });
+
+      document.getElementById('countTodo').textContent = todoCount;
+      document.getElementById('countInProgress').textContent = inProgCount;
+      document.getElementById('countCompleted').textContent = doneCount;
+      lucide.createIcons();
+    }
+
+    function updateTaskStatus(id, newStatus) {
+      socket.emit('task:update', { id, status: newStatus });
+    }
+
+    function openNewTaskModal() { document.getElementById('taskModal').classList.remove('hidden'); }
+    function closeNewTaskModal() { document.getElementById('taskModal').classList.add('hidden'); }
+    function saveNewTask() {
+      const title = document.getElementById('taskTitleInput').value.trim();
+      const notes = document.getElementById('taskNotesInput').value.trim();
+      const priority = document.getElementById('taskPrioritySelect').value;
+      const targetDevice = document.getElementById('taskTargetSelect').value;
+
+      if (title) {
+        socket.emit('task:create', { title, notes, priority, targetDevice });
+        closeNewTaskModal();
+        document.getElementById('taskTitleInput').value = '';
+        document.getElementById('taskNotesInput').value = '';
+      }
+    }
+
+    // ==================== MATHRUBHUMI CALENDAR ENGINE ====================
+    const NAKSHATRAS = ['അശ്വതി', 'ഭരണി', 'കാർത്തിക', 'രോഹിണി', 'മകയിരം', 'തിരുവാതിര', 'പുണർതം', 'പൂയം', 'ആയില്യം', 'മകം', 'പൂരം', 'ഉത്രം', 'അത്തം', 'ചിത്തിര', 'ചോതി', 'വിശാഖം', 'അനിഴം', 'തൃക്കേട്ട', 'മൂലം', 'പൂരാടം', 'ഉത്രാടം', 'തിരുവോണം', 'അവിട്ടം', 'ചതയം', 'പൂരുരുട്ടാതി', 'ഉത്രട്ടാതി', 'രേവതി'];
+
+    function renderCalendar() {
+      const grid = document.getElementById('calendarGrid');
+      grid.innerHTML = '';
+
+      // Month calculation for Nov 2026 as benchmark
+      const year = 2026;
+      const month = 10; // 0-indexed: 10 is November
+      const firstDay = new Date(year, month + calendarMonthOffset, 1).getDay();
+      const daysInMonth = new Date(year, month + calendarMonthOffset + 1, 0).getDate();
+
+      // Empty lead cells
+      for (let i = 0; i < firstDay; i++) {
+        const emptyCell = document.createElement('div');
+        emptyCell.className = 'h-16 rounded-lg bg-transparent';
+        grid.appendChild(emptyCell);
+      }
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const cell = document.createElement('div');
+        const nakshatra = NAKSHATRAS[(day + 4) % NAKSHATRAS.length];
+        const isToday = day === 2 && calendarMonthOffset === 0;
+
+        cell.className = `p-1.5 h-16 rounded-lg border cursor-pointer transition flex flex-col justify-between ${
+          isToday ? 'bg-brandCyan/20 border-brandCyan' : 'bg-cardVariant border-borderSteel hover:border-slate-400'
+        }`;
+        cell.onclick = () => selectCalendarDay(day, nakshatra);
+
+        cell.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="font-extrabold ${isToday ? 'text-brandCyan' : 'text-white'}">${day}</span>
+            <span class="text-[9px] font-bold text-amber-300">${day + 14}</span>
+          </div>
+          <span class="text-[9px] text-slate-300 truncate">${nakshatra}</span>
+          ${day === 1 ? '<span class="w-1.5 h-1.5 rounded-full bg-brandMint"></span>' : '<span></span>'}
+        `;
+        grid.appendChild(cell);
+      }
+    }
+
+    function selectCalendarDay(day, nakshatra) {
+      document.getElementById('heroDateTitle').textContent = `Day ${day}, November 2026`;
+      document.getElementById('heroMalayalamTitle').textContent = `1202 തുലാം ${day + 14} (Thulam ${day + 14})`;
+      document.getElementById('heroNakshatram').textContent = `${nakshatra}`;
+      document.getElementById('heroFestival').textContent = day === 1 ? 'കേരളപ്പിറവി / Kerala Piravi' : 'Regular Observance';
+    }
+
+    function shiftMonth(delta) {
+      calendarMonthOffset += delta;
+      renderCalendar();
+    }
+
+    // ==================== SHARED FILES & CLIPBOARD FEEDS ====================
+    function renderFiles() {
+      const container = document.getElementById('sharedFilesList');
+      container.innerHTML = '';
+
+      if (appState.files.length === 0) {
+        container.innerHTML = '<p class="text-xs text-slate-500">No files uploaded yet.</p>';
+        return;
+      }
+
+      appState.files.forEach(file => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between p-2.5 rounded-xl bg-cardVariant border border-borderSteel text-xs';
+        row.innerHTML = `
+          <div class="flex items-center space-x-2.5 overflow-hidden">
+            <div class="p-2 rounded-lg bg-brandViolet/20 text-brandViolet">
+              <i data-lucide="file" class="w-4 h-4"></i>
+            </div>
+            <div class="truncate">
+              <p class="font-bold text-white truncate">${escapeHtml(file.name)}</p>
+              <p class="text-[10px] text-slate-400">${(file.size / (1024 * 1024)).toFixed(2)} MB &bull; Target: ${file.target.toUpperCase()}</p>
+            </div>
+          </div>
+          <a href="${file.url || '#'}" download="${file.name}" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-brandCyan hover:text-obsidian text-brandCyan text-[11px] font-bold border border-borderSteel transition">
+            Download
+          </a>
+        `;
+        container.appendChild(row);
+      });
+      lucide.createIcons();
+    }
+
+    function renderClipboardFeed() {
+      const container = document.getElementById('clipboardFeed');
+      container.innerHTML = '';
+
+      appState.clipboardHistory.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'flex items-center justify-between p-2.5 rounded-xl bg-cardVariant border border-borderSteel text-xs';
+        card.innerHTML = `
+          <div class="overflow-hidden pr-3">
+            <span class="text-[9px] font-bold text-brandCyan uppercase">${item.sender} &rarr; ${item.target}</span>
+            <p class="text-slate-200 truncate mt-0.5">${escapeHtml(item.content)}</p>
+          </div>
+          <button onclick="copyToClipboard('${escapeAttr(item.content)}')" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[10px] border border-borderSteel whitespace-nowrap">
+            Copy
+          </button>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function renderTvStream() {
+      const container = document.getElementById('tvStreamList');
+      container.innerHTML = '';
+
+      // TV shows both files and items targeted to TV or all
+      const items = [
+        ...appState.tasks.filter(t => t.targetDevice === 'tv' || t.targetDevice === 'all').map(t => ({ type: 'Task', title: t.title, meta: t.notes })),
+        ...appState.clipboardHistory.filter(c => c.target === 'tv' || c.target === 'all').map(c => ({ type: 'Clipboard', title: c.content, meta: `From: ${c.sender}` }))
+      ];
+
+      if (items.length === 0) {
+        container.innerHTML = '<p class="text-sm text-slate-400">Awaiting stream packets from Laptop or Phone...</p>';
+        return;
+      }
+
+      items.forEach(it => {
+        const el = document.createElement('div');
+        el.className = 'p-3 rounded-xl bg-cardVariant border border-borderSteel text-sm flex items-center justify-between';
+        el.innerHTML = `
+          <div>
+            <span class="text-xs font-bold text-brandCyan uppercase mr-2">[${it.type}]</span>
+            <span class="text-white font-medium">${escapeHtml(it.title)}</span>
+            <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(it.meta || '')}</p>
+          </div>
+          <span class="text-xs text-brandMint font-bold">LIVE ON TV</span>
+        `;
+        container.appendChild(el);
+      });
+    }
+
+    // ==================== STUDY / SYLLABUS HARVESTER ====================
+    const STUDY_TOPICS = [
+      { subject: 'Python & AI', unit: 'Unit 1: Foundations', title: 'Supervised vs Unsupervised Learning', desc: 'Predictive modeling vs pattern clustering with loss optimization.' },
+      { subject: 'Applied Physics', unit: 'Unit 1: Semiconductor', title: 'P-N Junction Space Charge', desc: 'Barrier potential built-in voltage calculation and diffusion current.' },
+      { subject: 'Digital Electronics', unit: 'Unit 2: Logic', title: 'Karnaugh Maps & De Morgan', desc: 'Boolean simplification, gray codes, and NAND-NOR universality.' },
+      { subject: 'Mathematics I', unit: 'Unit 1: Matrices', title: 'Cayley-Hamilton Theorem', desc: 'Characteristic polynomials and inverse matrix computation.' }
+    ];
+
+    function renderStudyTopics(subject = 'Python & AI') {
+      const list = document.getElementById('studyTopicsList');
+      list.innerHTML = '';
+
+      STUDY_TOPICS.filter(t => t.subject === subject).forEach(t => {
+        const item = document.createElement('div');
+        item.className = 'p-3.5 rounded-xl bg-cardVariant border border-borderSteel';
+        item.innerHTML = `
+          <div class="flex items-center justify-between">
+            <h4 class="font-bold text-sm text-white">${t.title}</h4>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400">${t.unit}</span>
+          </div>
+          <p class="text-xs text-slate-300 mt-1">${t.desc}</p>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function filterStudySubject(subject) {
+      document.querySelectorAll('.study-chip').forEach(c => {
+        if (c.textContent.trim() === subject) {
+          c.className = 'study-chip px-3 py-1.5 rounded-lg bg-brandCyan/20 text-brandCyan border border-brandCyan text-xs font-semibold';
+        } else {
+          c.className = 'study-chip px-3 py-1.5 rounded-lg bg-cardVariant text-slate-400 border border-borderSteel text-xs font-semibold';
+        }
+      });
+      renderStudyTopics(subject);
+    }
+
+    // ==================== CUSTOM-NAMED AI ASSISTANT ====================
+    function toggleAiModal() {
+      const modal = document.getElementById('aiModal');
+      modal.classList.toggle('hidden');
+    }
+
+    function saveAiName() {
+      const input = document.getElementById('aiCustomNameInput');
+      const newName = input.value.trim();
+      if (newName) {
+        socket.emit('ai:rename', newName);
+      }
+    }
+
+    function updateAiNameUi() {
+      document.getElementById('headerAiName').textContent = appState.aiName;
+      document.getElementById('floatingAiName').textContent = appState.aiName;
+      document.getElementById('aiCustomNameInput').value = appState.aiName;
+      document.getElementById('aiGreetingHeader').textContent = appState.aiName;
+    }
+
+    function aiQuickPrompt(text) {
+      document.getElementById('aiPromptInput').value = text;
+      sendAiPrompt();
+    }
+
+    function sendAiPrompt() {
+      const input = document.getElementById('aiPromptInput');
+      const prompt = input.value.trim();
+      if (!prompt) return;
+
+      input.value = '';
+      const feed = document.getElementById('aiChatFeed');
+
+      // User speech bubble
+      const userEl = document.createElement('div');
+      userEl.className = 'bg-brandCyan/15 p-2.5 rounded-xl border border-brandCyan/30 max-w-[85%] ml-auto text-white';
+      userEl.textContent = prompt;
+      feed.appendChild(userEl);
+
+      // Context-aware command processor
+      let reply = `Command received by ${appState.aiName}.`;
+      const lower = prompt.toLowerCase();
+
+      if (lower.includes('paste') && lower.includes('tv')) {
+        const lastClip = appState.clipboardHistory[0]?.content || 'https://google.com';
+        socket.emit('clipboard:push', { content: lastClip, target: 'tv', sender: 'AI' });
+        reply = `Pushed last clipboard item to Smart TV over local Wi-Fi: "${lastClip}"`;
+      } else if (lower.includes('calendar') || lower.includes('festival')) {
+        reply = `Today in Mathrubhumi calendar: 1202 Thulam 15, Star: Aswathi. Festival: Kerala Piravi.`;
+      } else if (lower.includes('task') || lower.includes('schedule')) {
+        socket.emit('task:create', { title: prompt.replace(/add task:?/i, '').trim(), priority: 'high', targetDevice: 'all' });
+        reply = `Scheduled task across Laptop, Phone, and TV.`;
+      }
+
+      // Assistant speech bubble
+      setTimeout(() => {
+        const botEl = document.createElement('div');
+        botEl.className = 'bg-cardVariant p-2.5 rounded-xl border border-borderSteel max-w-[85%] text-slate-200';
+        botEl.innerHTML = `<span class="font-bold text-brandCyan mr-1">${escapeHtml(appState.aiName)}:</span> ${escapeHtml(reply)}`;
+        feed.appendChild(botEl);
+        feed.scrollTop = feed.scrollHeight;
+      }, 300);
+    }
+
+    // ==================== UTILITY HELPERS ====================
+    function updateUiElements() {
+      updateAiNameUi();
+      renderKanban();
+      renderCalendar();
+      renderFiles();
+      renderClipboardFeed();
+      renderTvStream();
+      renderStudyTopics();
+      lucide.createIcons();
+    }
+
+    function copyToClipboard(text) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+        showNotificationToast('Copied to device clipboard!');
+      }
+    }
+
+    function showNotificationToast(msg) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed top-16 right-4 z-50 px-3.5 py-2 rounded-xl bg-cardVariant border border-brandCyan text-xs text-brandCyan shadow-2xl font-semibold transition';
+      toast.textContent = msg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2500);
+    }
+
+    function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+    function escapeHtml(str) { return (str || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[m]); }
+    function escapeAttr(str) { return (str || '').replace(/'/g, "\\'"); }
+
+    // ==================== QUICK SHARE & BEAM HELPERS ====================
+    let currentTvPin = '849-201';
+
+    function refreshTvPin() {
+      const p1 = Math.floor(100 + Math.random() * 900);
+      const p2 = Math.floor(100 + Math.random() * 900);
+      currentTvPin = `${p1}-${p2}`;
+      const tvEl = document.getElementById('tvWebPin');
+      if (tvEl) tvEl.textContent = currentTvPin;
+      const inEl = document.getElementById('beamTvPinInput');
+      if (inEl) inEl.value = currentTvPin;
+      showNotificationToast(`New TV QuickShare PIN generated: ${currentTvPin}`);
+    }
+
+    function beamFileToTv() {
+      const pin = document.getElementById('beamTvPinInput').value.trim() || currentTvPin;
+      const filename = document.getElementById('beamFilenameInput').value.trim() || 'syllabus_sem1_aiml.pdf';
+      socket.emit('quickshare:beam', {
+        pin: pin,
+        file: filename,
+        notes: `QuickShare Beam from Laptop Master to TV (PIN: ${pin})`,
+        sender: 'Laptop'
+      });
+      showNotificationToast(`Beamed "${filename}" to Smart TV screen (PIN: ${pin})!`);
+      document.getElementById('beamFilenameInput').value = '';
+    }
+
+    function triggerWindowsQuickShare() {
+      if (navigator.share) {
+        navigator.share({
+          title: 'NIJO PVT Multi-Device QuickShare',
+          text: 'Shared file from NIJO PVT: syllabus_sem1_aiml.pdf',
+          url: window.location.href
+        }).then(() => {
+          showNotificationToast('Windows Quick Share launched!');
+        }).catch(err => {
+          showNotificationToast('Shared to clipboard & mesh.');
+        });
+      } else {
+        copyToClipboard(window.location.href);
+        showNotificationToast('Windows Share link copied to clipboard!');
+      }
+    }
+
+    function simulateTvBeamReceive() {
+      const sampleItem = {
+        id: 'beam_' + Date.now(),
+        pin: currentTvPin,
+        file: 'polytechnic_aiml_lab_record.pdf',
+        notes: 'Beamed from Android Phone via QuickShare PIN',
+        sender: 'Phone',
+        timestamp: Date.now()
+      };
+      handleQuickShareReceived(sampleItem);
+    }
+
+    function handleQuickShareReceived(item) {
+      showNotificationToast(`QuickShare Beam Received: ${item.file} from ${item.sender}`);
+      const stream = document.getElementById('tvStreamList');
+      if (stream) {
+        const el = document.createElement('div');
+        el.className = 'p-3 rounded-xl bg-cardVariant border-2 border-brandCyan text-sm flex items-center justify-between';
+        el.innerHTML = `
+          <div>
+            <span class="text-xs font-bold text-brandCyan uppercase mr-2">[QUICKSHARE BEAM]</span>
+            <span class="text-white font-bold">${escapeHtml(item.file)}</span>
+            <p class="text-xs text-slate-300 mt-0.5">${escapeHtml(item.notes || '')}</p>
+          </div>
+          <span class="text-xs text-brandMint font-bold bg-emerald-950 px-2 py-1 rounded border border-brandMint/40">PIN ${item.pin} VERIFIED</span>
+        `;
+        stream.prepend(el);
+      }
+    }
+
+    socket.on('quickshare:received', (item) => {
+      handleQuickShareReceived(item);
+    });
+
+    // ==================== SERVICE WORKER & INDEXEDDB PERSISTENCE ====================
+    const IDB_NAME = 'nijo_pvt_files_db';
+    const IDB_VERSION = 1;
+    const IDB_STORE = 'cached_files';
+
+    function openIndexedDb() {
+      return new Promise((resolve) => {
+        if (!window.indexedDB) return resolve(null);
+        const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(IDB_STORE)) {
+            const store = db.createObjectStore(IDB_STORE, { keyPath: 'id' });
+            store.createIndex('name', 'name', { unique: false });
+            store.createIndex('timestamp', 'timestamp', { unique: false });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      });
+    }
+
+    async function saveFileToIndexedDb(fileRecord, fileBlob) {
+      try {
+        const db = await openIndexedDb();
+        if (!db) return;
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        const store = tx.objectStore(IDB_STORE);
+        const item = {
+          ...fileRecord,
+          blob: fileBlob || fileRecord.blob,
+          timestamp: fileRecord.timestamp || Date.now(),
+          hotspotPersisted: true
+        };
+        store.put(item);
+        console.log('[IndexedDB] Cached shared file for offline Hotspot Direct session:', item.name);
+      } catch (err) {
+        console.warn('[IndexedDB] Save error:', err);
+      }
+    }
+
+    async function loadPersistedFilesFromIndexedDb() {
+      try {
+        const db = await openIndexedDb();
+        if (!db) return [];
+        return new Promise((resolve) => {
+          const tx = db.transaction(IDB_STORE, 'readonly');
+          const req = tx.objectStore(IDB_STORE).getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => resolve([]);
+        });
+      } catch (err) {
+        return [];
+      }
+    }
+
+    // Register Service Worker in public folder
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => {
+            console.log('[SW] Service Worker registered with scope:', reg.scope);
+            showNotificationToast('Service Worker active (Hotspot Offline Persisted)');
+          })
+          .catch(err => console.warn('[SW] Registration failed:', err));
+      });
+    }
+
+    // Init Lucide & Load Persisted Hotspot Files
+    window.addEventListener('DOMContentLoaded', async () => {
+      lucide.createIcons();
+      updateUiElements();
+
+      // Load cached files from IndexedDB to persist across browser restarts
+      const cached = await loadPersistedFilesFromIndexedDb();
+      if (cached && cached.length > 0) {
+        cached.forEach(cf => {
+          if (!appState.files.some(f => f.name === cf.name)) {
+            if (cf.blob && !cf.url) {
+              cf.url = URL.createObjectURL(cf.blob);
+            }
+            appState.files.unshift(cf);
+          }
+        });
+        renderFiles();
+        lucide.createIcons();
+      }
+    });
+  </script>
+</body>
+</html>

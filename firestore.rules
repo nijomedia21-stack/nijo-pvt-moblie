@@ -1,0 +1,119 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all unknown paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 &&
+             data.email is string && data.email.size() <= 256 &&
+             data.displayName is string && data.displayName.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidWorkspaceItem(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 &&
+             data.type is string && (data.type == 'NOTE' || data.type == 'TASK' || data.type == 'MEDIA') &&
+             data.title is string && data.title.size() <= 300 &&
+             data.content is string && data.content.size() <= 100000 &&
+             data.isCompleted is bool &&
+             data.priority is string && (data.priority == 'LOW' || data.priority == 'MEDIUM' || data.priority == 'HIGH') &&
+             data.tags is list && data.tags.size() <= 20 && (data.tags.size() == 0 || data.tags[0] is string) &&
+             (!('imageUrl' in data) || data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() <= 1000000)) &&
+             (!('aiSummary' in data) || data.aiSummary == null || (data.aiSummary is string && data.aiSummary.size() <= 50000)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidChatMessage(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 &&
+             data.role is string && (data.role == 'user' || data.role == 'model') &&
+             data.text is string && data.text.size() <= 100000 &&
+             (!('thinkingText' in data) || data.thinkingText == null || (data.thinkingText is string && data.thinkingText.size() <= 100000)) &&
+             data.modelUsed is string && data.modelUsed.size() <= 100 &&
+             data.hasImage is bool &&
+             data.timestamp is timestamp && data.timestamp <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(userId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'email', 'displayName', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'email', 'displayName', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(userId) &&
+                       incoming().userId == userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+
+      match /items/{itemId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         request.auth.uid == userId &&
+                         isValidId(itemId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll(['userId', 'type', 'title', 'content', 'isCompleted', 'priority', 'tags', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'type', 'title', 'content', 'isCompleted', 'priority', 'tags', 'imageUrl', 'aiSummary', 'createdAt', 'updatedAt']) &&
+                         isValidWorkspaceItem(incoming());
+
+        allow update: if isSignedIn() &&
+                         request.auth.uid == userId &&
+                         isValidId(itemId) &&
+                         incoming().userId == userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'isCompleted', 'priority', 'tags', 'imageUrl', 'aiSummary', 'updatedAt']) &&
+                         isValidWorkspaceItem(incoming());
+
+        allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(itemId);
+      }
+
+      match /chat_messages/{messageId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+
+        allow create: if isSignedIn() &&
+                         request.auth.uid == userId &&
+                         isValidId(messageId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll(['userId', 'role', 'text', 'modelUsed', 'hasImage', 'timestamp']) &&
+                         incoming().keys().hasOnly(['userId', 'role', 'text', 'thinkingText', 'modelUsed', 'hasImage', 'timestamp']) &&
+                         isValidChatMessage(incoming());
+
+        allow update: if false;
+
+        allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(messageId);
+      }
+    }
+  }
+}
