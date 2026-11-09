@@ -81,9 +81,11 @@ fun CustomNamedAiFloatingWidget(
   aiName: String,
   onAiNameChange: (String) -> Unit,
   viewModel: WorkspaceViewModel,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  initialOpen: Boolean = false,
+  onDismiss: () -> Unit = {}
 ) {
-  var isExpanded by remember { mutableStateOf(false) }
+  var isExpanded by remember(initialOpen) { mutableStateOf(initialOpen) }
   var isEditingName by remember { mutableStateOf(false) }
   var inputName by remember { mutableStateOf(aiName) }
   var userPrompt by remember { mutableStateOf("") }
@@ -96,61 +98,19 @@ fun CustomNamedAiFloatingWidget(
     mutableStateListOf(
       AiAssistantMessage(
         sender = "assistant",
-        text = "Hello Nijo! I am $aiName, your personal AI Copilot. I help manage your AI&ML Polytechnic studies, freelance graphic design & SMM client deliveries, Malayalam calendar, and QuickShare file transfers."
+        text = "Hello Nijo! I am $aiName, your personal AI Copilot & Study Tutor. I help with Engineering Maths, PSPP, Chemistry, and Physics concept explanations, code execution, and exam problem solving."
       )
     )
   }
 
   val uiState by viewModel.uiState.collectAsState()
 
-  // Floating trigger button - Optimized Navy Blue & White Design
-  Box(modifier = modifier) {
-    Surface(
-      shape = RoundedCornerShape(24.dp),
-      color = Color.White,
-      shadowElevation = 6.dp,
-      modifier = Modifier
-        .border(1.dp, NavyPrimary.copy(alpha = 0.25f), RoundedCornerShape(24.dp))
-        .clickable { isExpanded = true }
-        .testTag("ai_assistant_fab")
-    ) {
-      Row(
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Box(
-          modifier = Modifier
-            .size(24.dp)
-            .background(NavyPrimary, CircleShape),
-          contentAlignment = Alignment.Center
-        ) {
-          Icon(
-            Icons.Default.AutoAwesome,
-            contentDescription = aiName,
-            tint = Color.White,
-            modifier = Modifier.size(13.dp)
-          )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = aiName,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Bold,
-          color = NavyPrimary
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Box(
-          modifier = Modifier
-            .size(6.dp)
-            .background(NeonMint, CircleShape)
-        )
-      }
-    }
-  }
-
   // AI Assistant Dialog - Clean Navy Blue & White Theme
   if (isExpanded) {
-    Dialog(onDismissRequest = { isExpanded = false }) {
+    Dialog(onDismissRequest = {
+      isExpanded = false
+      onDismiss()
+    }) {
       Card(
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),

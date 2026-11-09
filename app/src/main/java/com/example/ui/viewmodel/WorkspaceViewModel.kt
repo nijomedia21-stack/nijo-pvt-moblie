@@ -16,6 +16,14 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+data class RemoteAppConfig(
+  val themeColorHex: String = "#0F294A",
+  val fontStyle: String = "DEFAULT", // "TYPEWRITER", "DEFAULT", "SERIF"
+  val lastUpdateTitle: String? = null,
+  val lastUpdateBody: String? = null,
+  val updateTimestamp: Long = 0L
+)
+
 sealed interface WorkspaceUiState {
   data object Loading : WorkspaceUiState
   data class Success(val items: List<WorkspaceItem>) : WorkspaceUiState
@@ -35,6 +43,24 @@ class WorkspaceViewModel(
   val selectedTab = MutableStateFlow("ALL") // "ALL", "NOTE", "TASK", "MEDIA"
   val searchQuery = MutableStateFlow("")
 
+  // Antigravity Remote Dynamic Theme & Typography Configuration
+  private val _remoteAppConfig = MutableStateFlow(RemoteAppConfig())
+  val remoteAppConfig: StateFlow<RemoteAppConfig> = _remoteAppConfig.asStateFlow()
+
+  fun applyRemoteUpdate(themeColor: String? = null, fontStyle: String? = null, title: String? = null, body: String? = null) {
+    val current = _remoteAppConfig.value
+    _remoteAppConfig.value = current.copy(
+      themeColorHex = themeColor?.takeIf { it.isNotBlank() } ?: current.themeColorHex,
+      fontStyle = fontStyle?.takeIf { it.isNotBlank() } ?: current.fontStyle,
+      lastUpdateTitle = title ?: current.lastUpdateTitle,
+      lastUpdateBody = body ?: current.lastUpdateBody,
+      updateTimestamp = System.currentTimeMillis()
+    )
+    if (!title.isNullOrBlank()) {
+      _actionMessage.value = "⚡ Antigravity update applied: $title"
+    }
+  }
+
   // Instagram-style Dual Mode Switcher
   private val _workspaceMode = MutableStateFlow(AppWorkspaceMode.STUDY_POLYTECHNIC)
   val workspaceMode: StateFlow<AppWorkspaceMode> = _workspaceMode.asStateFlow()
@@ -45,6 +71,28 @@ class WorkspaceViewModel(
 
   private val _actionMessage = MutableStateFlow<String?>(null)
   val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
+
+  private val _pendingSyncCount = MutableStateFlow(repository.getPendingSyncCount())
+  val pendingSyncCount: StateFlow<Int> = _pendingSyncCount.asStateFlow()
+
+  private val _syncStatus = MutableStateFlow("Synced")
+  val syncStatus: StateFlow<String> = _syncStatus.asStateFlow()
+
+  fun syncPendingChanges() {
+    viewModelScope.launch {
+      _syncStatus.value = "Syncing..."
+      repository.syncPendingOfflineChanges()
+        .onSuccess { count ->
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _syncStatus.value = if (count > 0) "Merged $count changes" else "Synced"
+          _actionMessage.value = if (count > 0) "Cloud synced: $count items updated" else "All items up to date"
+        }
+        .onFailure {
+          _syncStatus.value = "Offline Mode"
+          _actionMessage.value = "Saved locally in offline mode"
+        }
+    }
+  }
 
   private val _isAiProcessing = MutableStateFlow(false)
   val isAiProcessing: StateFlow<Boolean> = _isAiProcessing.asStateFlow()
@@ -100,8 +148,14 @@ class WorkspaceViewModel(
   fun createItem(item: WorkspaceItem) {
     viewModelScope.launch {
       repository.createItem(item)
-        .onSuccess { _actionMessage.value = "Synced across Phone, Laptop & TV" }
-        .onFailure { _actionMessage.value = "Sync failed: ${it.localizedMessage}" }
+        .onSuccess {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Synced across Phone, Laptop & TV"
+        }
+        .onFailure {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Saved offline: ${it.localizedMessage}"
+        }
     }
   }
 
@@ -119,8 +173,14 @@ class WorkspaceViewModel(
         tags = tags
       )
       repository.createItem(item)
-        .onSuccess { _actionMessage.value = "Note synced across devices" }
-        .onFailure { _actionMessage.value = "Failed to sync note: ${it.localizedMessage}" }
+        .onSuccess {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Note synced across devices"
+        }
+        .onFailure {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Saved offline"
+        }
     }
   }
 
@@ -140,8 +200,14 @@ class WorkspaceViewModel(
         tags = listOf("task", folder.lowercase()) + tags
       )
       repository.createItem(item)
-        .onSuccess { _actionMessage.value = "Task created and synced" }
-        .onFailure { _actionMessage.value = "Failed to create task: ${it.localizedMessage}" }
+        .onSuccess {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Task created and synced"
+        }
+        .onFailure {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Task saved offline"
+        }
     }
   }
 
@@ -149,22 +215,35 @@ class WorkspaceViewModel(
     viewModelScope.launch {
       val updated = item.copy(isCompleted = !item.isCompleted)
       repository.updateItem(updated)
+      _pendingSyncCount.value = repository.getPendingSyncCount()
     }
   }
 
   fun updateItem(item: WorkspaceItem) {
     viewModelScope.launch {
       repository.updateItem(item)
-        .onSuccess { _actionMessage.value = "Changes saved to cloud" }
-        .onFailure { _actionMessage.value = "Update failed: ${it.localizedMessage}" }
+        .onSuccess {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Changes saved to cloud"
+        }
+        .onFailure {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Saved offline"
+        }
     }
   }
 
   fun deleteItem(itemId: String) {
     viewModelScope.launch {
       repository.deleteItem(itemId)
-        .onSuccess { _actionMessage.value = "Item removed" }
-        .onFailure { _actionMessage.value = "Delete failed: ${it.localizedMessage}" }
+        .onSuccess {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Item removed"
+        }
+        .onFailure {
+          _pendingSyncCount.value = repository.getPendingSyncCount()
+          _actionMessage.value = "Deleted locally"
+        }
     }
   }
 

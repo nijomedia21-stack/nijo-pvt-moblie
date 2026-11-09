@@ -24,6 +24,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -64,14 +65,18 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import androidx.compose.runtime.Composable
@@ -114,6 +119,8 @@ import com.example.ui.theme.CleanBackground
 import com.example.ui.theme.CleanOutline
 import com.example.ui.theme.CleanSurface
 import com.example.ui.theme.CleanSurfaceVariant
+import com.example.ui.theme.ManropeFontFamily
+import com.example.ui.theme.NavyAccent
 import com.example.ui.theme.NavyLight
 import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
@@ -126,6 +133,7 @@ import com.example.ui.viewmodel.WorkspaceViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.util.FileDownloadHelper
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -143,6 +151,37 @@ fun isDeviceConnectedToWifi(context: Context): Boolean {
   }
 }
 
+/**
+ * Retrieves the current connected Wi-Fi Network Name / SSID
+ */
+fun getConnectedWifiSsid(context: Context): String {
+  return try {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    val activeNetwork = cm?.activeNetwork
+    val caps = cm?.getNetworkCapabilities(activeNetwork)
+    val isWifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    if (!isWifi) return "Mobile Data"
+
+    val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+    val info = wifiManager?.connectionInfo
+    val rawSsid = info?.ssid
+    if (!rawSsid.isNullOrBlank() && rawSsid != "<unknown ssid>" && rawSsid != "\"\"") {
+      rawSsid.trim().removePrefix("\"").removeSuffix("\"")
+    } else {
+      "Home Wi-Fi"
+    }
+  } catch (_: Exception) {
+    "Home Wi-Fi"
+  }
+}
+
+enum class CrossDeviceTab {
+  SEND_FILE,
+  RECEIVE_FILE,
+  UNIVERSAL_CLIPBOARD
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilesScreen(
   viewModel: WorkspaceViewModel,
@@ -174,11 +213,26 @@ fun FilesScreen(
   var isCheckingStatus by remember { mutableStateOf(false) }
   var latencyMs by remember { mutableStateOf<Long?>(null) }
   var isWifiConnected by remember { mutableStateOf<Boolean>(isDeviceConnectedToWifi(context)) }
+  var wifiSsid by remember { mutableStateOf<String>(getConnectedWifiSsid(context)) }
+  var downloadingFileId by remember { mutableStateOf<String?>(null) }
+  val savedFileUris = remember { androidx.compose.runtime.mutableStateMapOf<String, Uri>() }
 
-  // Continuously monitor Wi-Fi connectivity
+  val infiniteTransition = rememberInfiniteTransition(label = "pulse_radar")
+  val pulseAlpha by infiniteTransition.animateFloat(
+    initialValue = 0.35f,
+    targetValue = 1.0f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(900, easing = LinearEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "pulse_alpha"
+  )
+
+  // Continuously monitor Wi-Fi connectivity and Wi-Fi SSID
   androidx.compose.runtime.LaunchedEffect(Unit) {
     while (true) {
       isWifiConnected = isDeviceConnectedToWifi(context)
+      wifiSsid = getConnectedWifiSsid(context)
       kotlinx.coroutines.delay(2000)
     }
   }
@@ -230,22 +284,40 @@ fun FilesScreen(
     }
   }
 
+  var showIpConfigDialog by remember { mutableStateOf(false) }
+
   // Automatically check status and start SSE event stream on launch or IP change
   androidx.compose.runtime.LaunchedEffect(normalizedHost) {
     checkServerStatus(normalizedHost)
     startSseEventListener(
       context = context,
       hostUrl = normalizedHost,
-      onFileReceived = { fileName, fileContent ->
-        viewModel.createItem(
-          WorkspaceItem(
-            type = ItemType.MEDIA.name,
-            title = fileName,
-            content = fileContent,
-            tags = listOf("file", "sender_laptop", "target_mobile", "host_$normalizedHost", "auto_downloaded")
-          )
+      onFileReceived = { fileName, fileContent, fileUrl ->
+        val item = WorkspaceItem(
+          type = ItemType.MEDIA.name,
+          title = fileName,
+          content = fileContent,
+          imageUrl = fileUrl,
+          tags = listOf("file", "sender_laptop", "target_mobile", "host_$normalizedHost", "auto_downloaded")
         )
-        Toast.makeText(context, "📥 Auto-downloaded '$fileName' from Laptop", Toast.LENGTH_LONG).show()
+        viewModel.createItem(item)
+        // Automatically save to Android MediaStore Downloads/NIJO_PVT folder so file appears in File Manager
+        coroutineScope.launch {
+          FileDownloadHelper.downloadFileFromLaptop(
+            context = context,
+            hostUrl = normalizedHost,
+            fileName = fileName,
+            fileUrl = fileUrl,
+            fallbackContent = fileContent
+          ).onSuccess { uri ->
+            savedFileUris[item.id] = uri
+            Toast.makeText(context, "Saved '$fileName' to Downloads/NIJO_PVT in File Manager!", Toast.LENGTH_LONG).show()
+          }
+        }
+      },
+      onSystemUpdate = { title, body, themeColor, fontStyle ->
+        viewModel.applyRemoteUpdate(themeColor = themeColor, fontStyle = fontStyle, title = title, body = body)
+        com.example.util.SystemNotificationHelper.showSystemNotification(context, title, body)
       }
     )
   }
@@ -274,7 +346,9 @@ fun FilesScreen(
     }
   }
 
-  // System File Picker (User requirement: Pick File directly from phone storage with file size extraction)
+  var onFilePickedSendAction by remember { mutableStateOf<((Uri, String, Long, String) -> Unit)?>(null) }
+
+  // System File Picker (Triggered immediately when user clicks Send to Laptop / TV)
   val filePickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.GetContent()
   ) { uri: Uri? ->
@@ -284,18 +358,39 @@ fun FilesScreen(
       selectedFileName = info.name
       selectedFileSize = info.formattedSize
       selectedFileSizeBytes = info.sizeBytes
-      statusMessage = "Selected '${info.name}' (${info.formattedSize}) from phone"
+      statusMessage = "Selected '${info.name}' (${info.formattedSize})"
+
+      val action = onFilePickedSendAction
+      onFilePickedSendAction = null
+      action?.invoke(uri, info.name, info.sizeBytes, info.formattedSize)
+    } else {
+      onFilePickedSendAction = null
     }
   }
 
-  fun performSend(target: String, targetLabel: String) {
-    if (selectedFileUri == null && selectedFileName == null) {
-      Toast.makeText(context, "Please tap 'Pick File' to select a file from your phone first", Toast.LENGTH_SHORT).show()
+  fun performSend(
+    target: String,
+    targetLabel: String,
+    customUri: Uri? = null,
+    customName: String? = null,
+    customBytes: Long = 0L,
+    customFormattedSize: String? = null
+  ) {
+    val fileUriToUse = customUri ?: selectedFileUri
+    val fileToTransmit = customName ?: selectedFileName
+    val bytesToTransmit = if (customBytes > 0L) customBytes else selectedFileSizeBytes
+    val sizeText = customFormattedSize ?: selectedFileSize ?: "1.2 MB"
+
+    if (fileUriToUse == null || fileToTransmit == null) {
+      // Directly ask which file from phone storage!
+      onFilePickedSendAction = { uri, name, bytes, formatted ->
+        performSend(target, targetLabel, customUri = uri, customName = name, customBytes = bytes, customFormattedSize = formatted)
+      }
+      try {
+        filePickerLauncher.launch("*/*")
+      } catch (_: Exception) {}
       return
     }
-
-    val fileToTransmit = selectedFileName ?: "document_${System.currentTimeMillis()}.pdf"
-    val sizeText = selectedFileSize ?: "1.2 MB"
 
     // 1. Dispatch real HTTP multipart/form-data upload to http://<HOST_IP>:4000/upload
     isSendingHttp = true
@@ -307,9 +402,9 @@ fun FilesScreen(
       val uploadResult = sendPostRequestWithProgress(
         context = context,
         hostUrl = normalizedHost,
-        fileUri = selectedFileUri,
+        fileUri = fileUriToUse,
         fileName = fileToTransmit,
-        fileSize = selectedFileSizeBytes,
+        fileSize = bytesToTransmit,
         target = target,
         onProgress = { p ->
           uploadProgress = p
@@ -340,709 +435,1083 @@ fun FilesScreen(
     )
   }
 
+  val transferPin by viewModel.transferSecurityPin.collectAsState()
+  var activeSharingTab by remember { mutableStateOf(CrossDeviceTab.SEND_FILE) }
+  var tokenString by remember { mutableStateOf("TOKEN-8465-2820") }
+  var showMobileSetupSheet by remember { mutableStateOf(false) }
+
+  // Target Destination Devices
+  var targetMobileSelected by remember { mutableStateOf(true) }
+  var targetTvSelected by remember { mutableStateOf(false) }
+  var targetLaptopSelected by remember { mutableStateOf(true) }
+
+  // Active file to transmit (defaults to screenshot asset Libra_Master_Vector_Assets.svg)
+  val currentFileName = selectedFileName ?: "Libra_Master_Vector_Assets.svg"
+  val currentFileSize = selectedFileSize ?: "2.8 MB • Ready for Wi-Fi Direct packet stream"
+  val currentFileBytes = if (selectedFileSizeBytes > 0L) selectedFileSizeBytes else 2936012L
+
+  // Universal Clipboard Text
+  var clipboardInputText by remember { mutableStateOf("") }
+
+  val mediaItems = (uiState as? WorkspaceUiState.Success)?.items?.filter { it.type == ItemType.MEDIA.name } ?: emptyList()
+  val receivedLaptopCount = mediaItems.count { it.tags.contains("sender_laptop") || it.tags.contains("laptop") }
+
   Box(
     modifier = modifier
       .fillMaxSize()
-      .background(CleanBackground)
+      .background(Color(0xFFF8FAFC))
   ) {
     Column(
       modifier = Modifier
         .fillMaxSize()
         .verticalScroll(rememberScrollState())
-        .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 100.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp)
+        .padding(start = 14.dp, top = 14.dp, end = 14.dp, bottom = 100.dp),
+      verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-      // 1. Clean Mobile Header
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+      // 1. MOBILE HEADER: Title, Wi-Fi Direct Status, Token & Setup Button
+      Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        modifier = Modifier.fillMaxWidth()
       ) {
-        Column {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-              text = "File Transfer",
-              fontSize = 20.sp,
-              fontWeight = FontWeight.Bold,
-              color = NavyPrimary
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Box(
-              modifier = Modifier
-                .size(7.dp)
-                .background(NeonMint, CircleShape)
-            )
-          }
-          Text(
-            text = "Mobile Direct Transfer & Host Sync",
-            fontSize = 11.sp,
-            color = TextSecondary
-          )
-        }
-
-        Surface(
-          color = NavyLight,
-          shape = RoundedCornerShape(8.dp)
+        Column(
+          modifier = Modifier.padding(14.dp),
+          verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
           ) {
-            Icon(Icons.Default.Wifi, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(13.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Local Net", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-          }
-        }
-      }
-
-      // Wi-Fi Disconnected Warning (Crucial when user is on 5G/Mobile Data)
-      if (!isWifiConnected) {
-        Surface(
-          color = NavyLight,
-          shape = RoundedCornerShape(10.dp),
-          border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
-          modifier = Modifier.fillMaxWidth().testTag("wifi_disconnected_warning")
-        ) {
-          Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Icon(
-              Icons.Default.Wifi,
-              contentDescription = null,
-              tint = NavyPrimary,
-              modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
               Text(
-                text = "Wi-Fi Disconnected (Using Mobile Data)",
+                text = "Cross-Device File Sharing Hub",
+                fontFamily = com.example.ui.theme.OutfitFontFamily,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
                 color = NavyPrimary
               )
               Text(
-                text = "Your phone is currently using 5G Mobile Data. To connect to your Laptop Hub ($normalizedHost), please turn on Wi-Fi and connect to your home Wi-Fi network.",
+                text = "Mobile Direct Transfer & Local Wi-Fi Mesh",
+                fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
                 fontSize = 11.sp,
-                color = TextSecondary,
-                lineHeight = 15.sp
+                color = TextSecondary
               )
             }
-            Spacer(modifier = Modifier.width(6.dp))
-            Button(
-              onClick = {
-                try {
-                  val intent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+            // Minimal QR Scan Button + Mobile Setup Hub Button
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+              IconButton(
+                onClick = {
+                  try {
+                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                  } catch (_: Exception) {
+                    showQrScannerOverlay = true
                   }
-                  context.startActivity(intent)
-                } catch (_: Exception) {
-                  Toast.makeText(context, "Please turn on Wi-Fi in your phone Settings", Toast.LENGTH_SHORT).show()
-                }
-              },
-              colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-              shape = RoundedCornerShape(6.dp),
-              contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-              modifier = Modifier.height(32.dp).testTag("turn_on_wifi_btn")
-            ) {
-              Text("Turn On", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                },
+                modifier = Modifier
+                  .size(34.dp)
+                  .background(NavyLight, RoundedCornerShape(8.dp))
+                  .testTag("minimal_qr_scan_btn")
+              ) {
+                Icon(
+                  Icons.Default.QrCodeScanner,
+                  contentDescription = "Scan Laptop QR",
+                  tint = NavyPrimary,
+                  modifier = Modifier.size(17.dp)
+                )
+              }
+
+              Button(
+                onClick = { showMobileSetupSheet = true },
+                colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                modifier = Modifier.height(34.dp).testTag("open_mobile_setup_btn")
+              ) {
+                Text(
+                  text = "Setup Hub",
+                  fontFamily = com.example.ui.theme.OutfitFontFamily,
+                  fontSize = 11.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = Color.White
+                )
+              }
             }
           }
-        }
-      }
 
-      // 2. "Nearby Devices on Wi-Fi" Section (LocalSend-Inspired)
-      Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CleanSurface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, CleanOutline),
-        modifier = Modifier.fillMaxWidth().testTag("nearby_devices_card")
-      ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          // Mobile Status Pill Row: Wi-Fi status + Token + PIN
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(Icons.Default.Wifi, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(18.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("Nearby Devices on Wi-Fi", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-            }
-
+            // Wi-Fi Direct Pill
             Surface(
-              color = if (isHostOnline) NeonMint.copy(alpha = 0.2f) else NavyLight,
-              shape = RoundedCornerShape(12.dp)
+              color = if (isWifiConnected) Color(0xFFF0FDF4) else NavyLight,
+              shape = RoundedCornerShape(8.dp),
+              border = androidx.compose.foundation.BorderStroke(1.dp, if (isWifiConnected) Color(0xFF86EFAC) else Color(0xFFCBD5E1))
             ) {
               Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
               ) {
                 Box(
                   modifier = Modifier
-                    .size(7.dp)
-                    .background(if (isHostOnline) NeonMint else Color.Gray, CircleShape)
+                    .size(6.dp)
+                    .background(if (isWifiConnected) Color(0xFF16A34A).copy(alpha = pulseAlpha) else Color(0xFF94A3B8), CircleShape)
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
-                  text = if (isHostOnline) "Connected ●" else "Scanning",
+                  text = if (isWifiConnected) "Wi-Fi Direct Active ($wifiSsid)" else "Mobile Data ($wifiSsid)",
+                  fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
                   fontSize = 10.5.sp,
                   fontWeight = FontWeight.Bold,
-                  color = if (isHostOnline) Color(0xFF007A50) else TextSecondary
+                  color = if (isWifiConnected) Color(0xFF15803D) else NavyPrimary
                 )
               }
             }
-          }
 
-          // Editable Server IP field + [QR]
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            OutlinedTextField(
-              value = hostIpInput,
-              onValueChange = {
-                hostIpInput = it
-                sharedPreferences.edit().putString("saved_host_ip", it).apply()
-              },
-              placeholder = { Text("e.g. 192.168.1.2:4000", fontSize = 11.sp) },
-              singleLine = true,
-              modifier = Modifier
-                .weight(1f)
-                .testTag("host_ip_input"),
-              colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = NavyPrimary,
-                unfocusedBorderColor = CleanOutline,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary
-              )
-            )
-
-            // "QR" button with single clean SVG icon
-            Button(
-              onClick = {
-                try {
-                  cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                } catch (_: Exception) {
-                  showQrScannerOverlay = true
+            // Dynamic Token & PIN
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+              Surface(
+                color = Color(0xFFF8FAFC),
+                shape = RoundedCornerShape(6.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                modifier = Modifier.clickable {
+                  val rand = (1000..9999).random()
+                  val rand2 = (1000..9999).random()
+                  tokenString = "TOKEN-$rand-$rand2"
+                  Toast.makeText(context, "Regenerated token: $tokenString", Toast.LENGTH_SHORT).show()
                 }
-              },
-              colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-              shape = RoundedCornerShape(10.dp),
-              contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-              modifier = Modifier
-                .height(52.dp)
-                .testTag("scan_qr_button")
-            ) {
-              Icon(
-                Icons.Default.QrCodeScanner,
-                contentDescription = "Scan QR",
-                tint = Color.White,
-                modifier = Modifier.size(16.dp)
-              )
-              Spacer(modifier = Modifier.width(4.dp))
+              ) {
+                Text(
+                  text = tokenString,
+                  fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                  fontSize = 10.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = NavySecondary,
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                )
+              }
+
               Text(
-                text = "QR",
-                fontSize = 11.5.sp,
+                text = "PIN: $transferPin",
+                fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                fontSize = 10.5.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = TextSecondary
               )
-            }
-          }
-
-          // One-tap Connect and Auto-Detect Wi-Fi buttons
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            Button(
-              onClick = {
-                val target = if (hostIpInput.isNotBlank()) cleanHostAddress(hostIpInput) else "192.168.1.2:4000"
-                hostIpInput = target
-                sharedPreferences.edit().putString("saved_host_ip", target).apply()
-                checkServerStatus(target, forceConnectedOnManualClick = true)
-              },
-              colors = ButtonDefaults.buttonColors(containerColor = NavyLight),
-              shape = RoundedCornerShape(8.dp),
-              modifier = Modifier.weight(1f).testTag("connect_default_ip_btn")
-            ) {
-              Icon(Icons.Default.FlashOn, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(15.dp))
-              Spacer(modifier = Modifier.width(4.dp))
-              Text("Connect", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-            }
-
-            Button(
-              onClick = { runAutoDiscovery() },
-              colors = ButtonDefaults.buttonColors(containerColor = if (isScanningSubnet) NeonMint else NavyPrimary),
-              shape = RoundedCornerShape(8.dp),
-              modifier = Modifier.weight(1.2f).testTag("auto_detect_wifi_btn")
-            ) {
-              if (isScanningSubnet) {
-                CircularProgressIndicator(
-                  color = NavyPrimary,
-                  modifier = Modifier.size(13.dp),
-                  strokeWidth = 2.dp
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Scanning...", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-              } else {
-                Icon(Icons.Default.Search, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Auto-Detect Wi-Fi", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-              }
-            }
-          }
-
-          // Discovered Nearby Devices Tiles (LocalSend Model)
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            // Device 1: Laptop
-            Surface(
-              color = CleanSurfaceVariant,
-              shape = RoundedCornerShape(10.dp),
-              border = androidx.compose.foundation.BorderStroke(1.dp, if (isHostOnline) NeonMint.copy(alpha = 0.6f) else CleanOutline),
-              modifier = Modifier.weight(1f)
-            ) {
-              Row(
-                modifier = Modifier.padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Box(
-                  modifier = Modifier.size(34.dp).background(NavyLight, CircleShape),
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(Icons.Default.Computer, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(18.dp))
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                  Text("Laptop Hub", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                  Text(if (isHostOnline) "● Online (${latencyMs ?: 12}ms)" else "● Ready", fontSize = 10.sp, color = if (isHostOnline) NeonMint else TextSecondary)
-                }
-              }
-            }
-
-            // Device 2: TV
-            Surface(
-              color = CleanSurfaceVariant,
-              shape = RoundedCornerShape(10.dp),
-              border = androidx.compose.foundation.BorderStroke(1.dp, CleanOutline),
-              modifier = Modifier.weight(1f)
-            ) {
-              Row(
-                modifier = Modifier.padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Box(
-                  modifier = Modifier.size(34.dp).background(NavyLight, CircleShape),
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(Icons.Default.Tv, contentDescription = null, tint = NavySecondary, modifier = Modifier.size(18.dp))
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                  Text("Living Room TV", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                  Text("● Ready", fontSize = 10.sp, color = TextSecondary)
-                }
-              }
             }
           }
         }
       }
 
-      // 3. File Selection & ONLY TWO Send Buttons Card
-      Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CleanSurface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, CleanOutline),
-        modifier = Modifier.fillMaxWidth().testTag("file_picker_and_send_card")
+      // 2. MOBILE SEGMENTED TABS (Navy Blue & White): [Send File] [Receive] [Clipboard]
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .background(Color.White, RoundedCornerShape(10.dp))
+          .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(10.dp))
+          .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
       ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          Text(
-            text = "Select & Send File:",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            color = NavyPrimary
-          )
-
-          // "Pick File" Button (Opens Native Phone File Manager) - Single Clean SVG Icon
-          Button(
-            onClick = {
-              try {
-                filePickerLauncher.launch("*/*")
-              } catch (_: Exception) {}
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-            shape = RoundedCornerShape(10.dp),
-            modifier = Modifier.fillMaxWidth().testTag("pick_file_button")
-          ) {
-            Icon(Icons.Default.Folder, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
+        // Tab 1: Send File
+        val isSendActive = activeSharingTab == CrossDeviceTab.SEND_FILE
+        Box(
+          modifier = Modifier
+            .weight(1f)
+            .background(if (isSendActive) NavyPrimary else Color.Transparent, RoundedCornerShape(8.dp))
+            .clickable { activeSharingTab = CrossDeviceTab.SEND_FILE }
+            .padding(vertical = 8.dp)
+            .testTag("tab_send_file"),
+          contentAlignment = Alignment.Center
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Share, contentDescription = null, tint = if (isSendActive) Color.White else NavyPrimary, modifier = Modifier.size(13.dp))
+            Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = if (selectedFileName != null) "Change File" else "Pick File",
-              fontSize = 12.5.sp,
+              text = "Send File",
+              fontFamily = com.example.ui.theme.OutfitFontFamily,
+              fontSize = 11.sp,
               fontWeight = FontWeight.Bold,
-              color = Color.White
+              color = if (isSendActive) Color.White else NavyPrimary
             )
           }
+        }
 
-          // Compact File preview chip showing File Name, File Size, and an "X" button to clear it
-          selectedFileName?.let { fname ->
-            Surface(
-              color = CleanSurfaceVariant,
-              shape = RoundedCornerShape(10.dp),
-              border = androidx.compose.foundation.BorderStroke(1.dp, NeonMint.copy(alpha = 0.6f)),
-              modifier = Modifier.fillMaxWidth().testTag("selected_file_preview")
+        // Tab 2: Receive File
+        val isReceiveActive = activeSharingTab == CrossDeviceTab.RECEIVE_FILE
+        Box(
+          modifier = Modifier
+            .weight(1.1f)
+            .background(if (isReceiveActive) NavyPrimary else Color.Transparent, RoundedCornerShape(8.dp))
+            .clickable { activeSharingTab = CrossDeviceTab.RECEIVE_FILE }
+            .padding(vertical = 8.dp)
+            .testTag("tab_receive_file"),
+          contentAlignment = Alignment.Center
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.FileDownload, contentDescription = null, tint = if (isReceiveActive) Color.White else NavySecondary, modifier = Modifier.size(13.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = "Receive",
+              fontFamily = com.example.ui.theme.OutfitFontFamily,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold,
+              color = if (isReceiveActive) Color.White else NavyPrimary
+            )
+            if (receivedLaptopCount > 0) {
+              Spacer(modifier = Modifier.width(4.dp))
+              Surface(
+                color = if (isReceiveActive) Color.White.copy(alpha = 0.3f) else NavyPrimary,
+                shape = CircleShape
+              ) {
+                Text(
+                  text = "$receivedLaptopCount",
+                  fontSize = 9.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = Color.White,
+                  modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+              }
+            }
+          }
+        }
+
+        // Tab 3: Universal Clipboard
+        val isClipboardActive = activeSharingTab == CrossDeviceTab.UNIVERSAL_CLIPBOARD
+        Box(
+          modifier = Modifier
+            .weight(1f)
+            .background(if (isClipboardActive) NavyPrimary else Color.Transparent, RoundedCornerShape(8.dp))
+            .clickable { activeSharingTab = CrossDeviceTab.UNIVERSAL_CLIPBOARD }
+            .padding(vertical = 8.dp)
+            .testTag("tab_universal_clipboard"),
+          contentAlignment = Alignment.Center
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = if (isClipboardActive) Color.White else TextSecondary, modifier = Modifier.size(12.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = "Clipboard",
+              fontFamily = com.example.ui.theme.OutfitFontFamily,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold,
+              color = if (isClipboardActive) Color.White else TextSecondary
+            )
+          }
+        }
+      }
+
+      // Upload Progress Bar (if in progress)
+      uploadProgress?.let { prog ->
+        Surface(
+          color = NavyLight,
+          shape = RoundedCornerShape(10.dp),
+          border = androidx.compose.foundation.BorderStroke(1.dp, NavySecondary),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
             ) {
+              Text(
+                text = if (prog >= 1.0f) "Sent Successfully!" else "Transmitting to $uploadTargetLabel",
+                fontFamily = com.example.ui.theme.OutfitFontFamily,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = NavyPrimary
+              )
+              Text("${(prog * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+            }
+            androidx.compose.material3.LinearProgressIndicator(
+              progress = { prog },
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp)),
+              color = NavySecondary,
+              trackColor = Color(0xFFD1D5DB)
+            )
+          }
+        }
+      }
+
+      when (activeSharingTab) {
+        CrossDeviceTab.SEND_FILE -> {
+          // 3. MOBILE SEND FILE CARD (Clean Mobile Layout)
+          Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth().testTag("send_file_mesh_card")
+          ) {
+            Column(
+              modifier = Modifier.padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+              // Row: Title + "Pick from Phone" button
               Row(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                Box(
-                  modifier = Modifier
-                    .size(32.dp)
-                    .background(NavyLight, CircleShape),
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(
-                    Icons.Default.InsertDriveFile,
-                    contentDescription = null,
-                    tint = NavyPrimary,
-                    modifier = Modifier.size(18.dp)
-                  )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
+                Column {
                   Text(
-                    text = fname,
-                    fontSize = 12.5.sp,
+                    text = "Send via Wi-Fi Mesh",
+                    fontFamily = com.example.ui.theme.OutfitFontFamily,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color = TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    color = NavyPrimary
                   )
                   Text(
-                    text = "${selectedFileSize ?: "Unknown"} • Ready to send",
-                    fontSize = 10.5.sp,
+                    text = "Select a real file from your device or pick from static files",
+                    fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                    fontSize = 11.sp,
                     color = TextSecondary
                   )
                 }
-                IconButton(
+
+                // Pick from Phone File Button
+                Button(
                   onClick = {
-                    selectedFileName = null
-                    selectedFileSize = null
-                    selectedFileSizeBytes = 0L
-                    selectedFileUri = null
-                    statusMessage = null
+                    try {
+                      filePickerLauncher.launch("*/*")
+                    } catch (_: Exception) {}
                   },
-                  modifier = Modifier
-                    .size(28.dp)
-                    .testTag("clear_selected_file_btn")
+                  colors = ButtonDefaults.buttonColors(containerColor = NavyLight),
+                  shape = RoundedCornerShape(8.dp),
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                  modifier = Modifier.height(34.dp).testTag("browse_pc_file_btn")
                 ) {
-                  Icon(
-                    Icons.Default.Close,
-                    contentDescription = "Clear file",
-                    tint = TextMuted,
-                    modifier = Modifier.size(16.dp)
-                  )
+                  Icon(Icons.Default.Share, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(13.dp))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Pick File", fontFamily = com.example.ui.theme.OutfitFontFamily, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
                 }
+              }
+
+              // Active File Box with Static Files Presets
+              Surface(
+                color = Color(0xFFF8FAFC),
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                modifier = Modifier.fillMaxWidth()
+              ) {
+                Column(
+                  modifier = Modifier.padding(12.dp),
+                  verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Box(
+                      modifier = Modifier
+                        .size(38.dp)
+                        .background(Color.White, RoundedCornerShape(8.dp))
+                        .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(8.dp)),
+                      contentAlignment = Alignment.Center
+                    ) {
+                      Icon(
+                        Icons.Default.InsertDriveFile,
+                        contentDescription = null,
+                        tint = NavyPrimary,
+                        modifier = Modifier.size(20.dp)
+                      )
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                      Text(
+                        text = currentFileName,
+                        fontFamily = com.example.ui.theme.OutfitFontFamily,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NavyPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip
+                      )
+                      Text(
+                        text = currentFileSize,
+                        fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                      )
+                    }
+                  }
+
+                  // Static Files Preset Chips
+                  Text(
+                    text = "Static Files:",
+                    fontSize = 11.sp,
+                    fontFamily = com.example.ui.theme.ManropeFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextSecondary
+                  )
+
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  ) {
+                    Surface(
+                      color = Color.White,
+                      shape = RoundedCornerShape(6.dp),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                      modifier = Modifier.weight(1f).clickable {
+                        selectedFileName = "Engineering_Mathematics_Sem3.pdf"
+                        selectedFileSize = "3.4 MB • Ready for Wi-Fi Direct packet stream"
+                        selectedFileSizeBytes = 3565158L
+                        selectedFileUri = null
+                        statusMessage = "Loaded Maths PDF preset"
+                      }
+                    ) {
+                      Text(
+                        text = "Maths PDF",
+                        fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NavyPrimary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 5.dp)
+                      )
+                    }
+
+                    Surface(
+                      color = Color.White,
+                      shape = RoundedCornerShape(6.dp),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                      modifier = Modifier.weight(1f).clickable {
+                        selectedFileName = "Microcontroller_8051_Firmware.c"
+                        selectedFileSize = "142 KB • Ready for Wi-Fi Direct packet stream"
+                        selectedFileSizeBytes = 145408L
+                        selectedFileUri = null
+                        statusMessage = "Loaded PSPP Code preset"
+                      }
+                    ) {
+                      Text(
+                        text = "PSPP Code",
+                        fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NavyPrimary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 5.dp)
+                      )
+                    }
+
+                    Surface(
+                      color = Color.White,
+                      shape = RoundedCornerShape(6.dp),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                      modifier = Modifier.weight(1f).clickable {
+                        selectedFileName = "Libra_Master_Vector_Assets.svg"
+                        selectedFileSize = "2.8 MB • Ready for Wi-Fi Direct packet stream"
+                        selectedFileSizeBytes = 2936012L
+                        selectedFileUri = null
+                        statusMessage = "Loaded Libra SVG preset"
+                      }
+                    ) {
+                      Text(
+                        text = "Libra SVG",
+                        fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = NavyPrimary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(vertical = 5.dp)
+                      )
+                    }
+                  }
+                }
+              }
+
+              // Destination Devices (Mobile Stack)
+              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Text(
+                    text = "Destination Devices:",
+                    fontFamily = com.example.ui.theme.OutfitFontFamily,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = NavyPrimary
+                  )
+
+                  // Device Presets
+                  Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Surface(
+                      color = if (targetLaptopSelected && !targetMobileSelected && !targetTvSelected) NavyLight else Color(0xFFF1F5F9),
+                      shape = RoundedCornerShape(4.dp),
+                      modifier = Modifier.clickable {
+                        targetLaptopSelected = true
+                        targetMobileSelected = false
+                        targetTvSelected = false
+                      }
+                    ) {
+                      Text("Laptop", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = NavyPrimary, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                    }
+
+                    Surface(
+                      color = if (targetMobileSelected && targetLaptopSelected && targetTvSelected) NavyPrimary else Color(0xFFF1F5F9),
+                      shape = RoundedCornerShape(4.dp),
+                      modifier = Modifier.clickable {
+                        targetMobileSelected = true
+                        targetLaptopSelected = true
+                        targetTvSelected = true
+                      }
+                    ) {
+                      Text("All 3", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = if (targetMobileSelected && targetLaptopSelected && targetTvSelected) Color.White else NavyPrimary, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                    }
+                  }
+                }
+
+                // Device Cards: Mobile, Laptop, TV
+                Surface(
+                  color = if (targetLaptopSelected) Color(0xFFF0FDF4) else Color(0xFFF8FAFC),
+                  shape = RoundedCornerShape(8.dp),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, if (targetLaptopSelected) Color(0xFF86EFAC) else Color(0xFFE2E8F0)),
+                  modifier = Modifier.fillMaxWidth().clickable { targetLaptopSelected = !targetLaptopSelected }
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    androidx.compose.material3.Checkbox(
+                      checked = targetLaptopSelected,
+                      onCheckedChange = { targetLaptopSelected = it },
+                      modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("💻 Laptop (Windows 11 Hub)", fontSize = 12.sp, fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                  }
+                }
+
+                Surface(
+                  color = if (targetMobileSelected) Color(0xFFF0FDF4) else Color(0xFFF8FAFC),
+                  shape = RoundedCornerShape(8.dp),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, if (targetMobileSelected) Color(0xFF86EFAC) else Color(0xFFE2E8F0)),
+                  modifier = Modifier.fillMaxWidth().clickable { targetMobileSelected = !targetMobileSelected }
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    androidx.compose.material3.Checkbox(
+                      checked = targetMobileSelected,
+                      onCheckedChange = { targetMobileSelected = it },
+                      modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("📱 Mobile (Android)", fontSize = 12.sp, fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                  }
+                }
+
+                Surface(
+                  color = if (targetTvSelected) Color(0xFFF0FDF4) else Color(0xFFF8FAFC),
+                  shape = RoundedCornerShape(8.dp),
+                  border = androidx.compose.foundation.BorderStroke(1.dp, if (targetTvSelected) Color(0xFF86EFAC) else Color(0xFFE2E8F0)),
+                  modifier = Modifier.fillMaxWidth().clickable { targetTvSelected = !targetTvSelected }
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    androidx.compose.material3.Checkbox(
+                      checked = targetTvSelected,
+                      onCheckedChange = { targetTvSelected = it },
+                      modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("📺 Smart TV (Living Room)", fontSize = 12.sp, fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                  }
+                }
+              }
+
+              // Full-width Hero Action: Verify PIN & Send File
+              Button(
+                onClick = {
+                  val targetLabel = when {
+                    targetLaptopSelected && targetTvSelected -> "Laptop & TV"
+                    targetLaptopSelected -> "Laptop (Windows 11)"
+                    targetTvSelected -> "Smart TV"
+                    else -> "Selected Devices"
+                  }
+
+                  performSend(
+                    target = if (targetLaptopSelected) "laptop" else "tv",
+                    targetLabel = targetLabel,
+                    customUri = selectedFileUri,
+                    customName = currentFileName,
+                    customBytes = currentFileBytes,
+                    customFormattedSize = currentFileSize
+                  )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .height(48.dp)
+                  .testTag("verify_pin_and_send_btn")
+              ) {
+                Icon(Icons.Default.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                  text = "Verify PIN ($transferPin) & Send File",
+                  fontFamily = com.example.ui.theme.OutfitFontFamily,
+                  fontSize = 13.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = Color.White
+                )
               }
             }
           }
 
-          // Real-time 0% to 100% progress bar when sending
-          uploadProgress?.let { prog ->
+          // 4. MOBILE UNIFIED TRANSFER HISTORY CARD
+          Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth().testTag("transfer_history_card")
+          ) {
             Column(
-              modifier = Modifier
-                .fillMaxWidth()
-                .background(NavyLight, RoundedCornerShape(8.dp))
-                .padding(10.dp),
-              verticalArrangement = Arrangement.spacedBy(4.dp)
+              modifier = Modifier.padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
               Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
               ) {
-                Text(
-                  text = if (prog >= 1.0f) "Sent Successfully!" else "Sending to $uploadTargetLabel...",
-                  fontSize = 11.5.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = NavyPrimary
-                )
-                Text("${(prog * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-              }
-              androidx.compose.material3.LinearProgressIndicator(
-                progress = { prog },
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .height(6.dp)
-                  .clip(RoundedCornerShape(3.dp)),
-                color = NeonMint,
-                trackColor = Color(0xFFD1D5DB)
-              )
-            }
-          }
-
-          // ONLY TWO SEND BUTTONS: 1. Send to Laptop | 2. Send to TV - Single Clean SVG Icon
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            // Button 1: Send to Laptop
-            Button(
-              onClick = { performSend("laptop", "Laptop") },
-              colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-              shape = RoundedCornerShape(10.dp),
-              modifier = Modifier.weight(1f).testTag("send_to_laptop_btn")
-            ) {
-              Icon(Icons.Default.Computer, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("Send to Laptop", fontSize = 11.5.sp, color = Color.White, fontWeight = FontWeight.Bold)
-            }
-
-            // Button 2: Send to TV
-            Button(
-              onClick = { performSend("tv", "TV") },
-              colors = ButtonDefaults.buttonColors(containerColor = NavySecondary),
-              shape = RoundedCornerShape(10.dp),
-              modifier = Modifier.weight(1f).testTag("send_to_tv_btn")
-            ) {
-              Icon(Icons.Default.Tv, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("Send to TV", fontSize = 11.5.sp, color = Color.White, fontWeight = FontWeight.Bold)
-            }
-          }
-        }
-      }
-
-      // Status Banner if any
-      statusMessage?.let { rawMsg ->
-        val msg = rawMsg.replace("http:////", "http://").replace("http:///", "http://")
-        val isErr = msg.contains("Cannot connect", ignoreCase = true) ||
-          msg.contains("failed", ignoreCase = true) ||
-          msg.contains("timed out", ignoreCase = true) ||
-          msg.contains("not detected", ignoreCase = true) ||
-          msg.contains("Error", ignoreCase = true)
-
-        val isSuccess = !isErr && (
-          msg.startsWith("Sent", ignoreCase = true) ||
-          msg.startsWith("Connected", ignoreCase = true) ||
-          msg.startsWith("Found", ignoreCase = true)
-        )
-
-        Surface(
-          color = if (isSuccess) NavyLight else Color(0xFFF1F5F9),
-          shape = RoundedCornerShape(10.dp),
-          border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (isSuccess) NeonMint else Color(0xFFCBD5E1)
-          ),
-          modifier = Modifier.fillMaxWidth().testTag("status_banner")
-        ) {
-          Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween,
-              verticalAlignment = Alignment.Top
-            ) {
-              Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.Top) {
-                Icon(
-                  if (isSuccess) Icons.Default.CheckCircle else Icons.Default.Info,
-                  contentDescription = null,
-                  tint = if (isSuccess) NeonMint else NavyPrimary,
-                  modifier = Modifier.size(18.dp).padding(top = 1.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                  text = msg,
-                  fontSize = 12.sp,
-                  color = NavyPrimary,
-                  fontWeight = FontWeight.Medium,
-                  lineHeight = 17.sp
-                )
-              }
-              IconButton(onClick = { statusMessage = null }, modifier = Modifier.size(24.dp)) {
-                Text("✕", fontSize = 13.sp, color = NavyPrimary, fontWeight = FontWeight.Bold)
-              }
-            }
-
-            // Quick recovery actions if connection failed or scanning
-            if (msg.contains("Cannot connect", ignoreCase = true) || msg.contains("failed", ignoreCase = true) || msg.contains("Scanning", ignoreCase = true)) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-              ) {
-                Button(
-                  onClick = { runAutoDiscovery() },
-                  colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-                  shape = RoundedCornerShape(6.dp),
-                  contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                  modifier = Modifier.height(34.dp)
-                ) {
-                  Icon(Icons.Default.Search, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                  Spacer(modifier = Modifier.width(4.dp))
-                  Text("Auto-Detect Wi-Fi", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                Column {
+                  Text(
+                    text = "Unified Transfer History",
+                    fontFamily = com.example.ui.theme.OutfitFontFamily,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = NavyPrimary
+                  )
+                  Text(
+                    text = "Records across Laptop, Phone, and TV",
+                    fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                    fontSize = 11.sp,
+                    color = TextSecondary
+                  )
                 }
 
-                OutlinedButton(
-                  onClick = { showTroubleshootDialog = true },
-                  shape = RoundedCornerShape(6.dp),
-                  contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                  modifier = Modifier.height(34.dp)
+                TextButton(
+                  onClick = {
+                    mediaItems.forEach { viewModel.deleteItem(it.id) }
+                    Toast.makeText(context, "Cleared transfer log", Toast.LENGTH_SHORT).show()
+                  },
+                  modifier = Modifier.testTag("clear_history_log_btn")
                 ) {
-                  Icon(Icons.Default.HelpOutline, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(14.dp))
-                  Spacer(modifier = Modifier.width(4.dp))
-                  Text("Setup Guide", fontSize = 11.sp, color = NavyPrimary, fontWeight = FontWeight.Bold)
+                  Text("Clear Log", fontFamily = com.example.ui.theme.OutfitFontFamily, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = TextMuted)
                 }
               }
-            }
-          }
-        }
-      }
 
-      // 4. "Received from Laptop" Section
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Column {
-          Text(
-            text = "Received from Laptop",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = NavyPrimary
-          )
-          Text(
-            text = "Listening to http://$normalizedHost/events",
-            fontSize = 10.5.sp,
-            color = TextSecondary
-          )
-        }
-
-        // Test Simulated Laptop Push for verification
-        IconButton(
-          onClick = {
-            viewModel.createItem(
-              WorkspaceItem(
-                type = ItemType.MEDIA.name,
-                title = "project_brief_laptop.pdf",
-                content = "Received from Laptop via http://$normalizedHost/events",
-                tags = listOf("file", "sender_laptop", "target_mobile", "host_$normalizedHost")
-              )
-            )
-            Toast.makeText(context, "Received project_brief_laptop.pdf from Laptop", Toast.LENGTH_SHORT).show()
-          },
-          modifier = Modifier.size(32.dp).testTag("sim_laptop_incoming_btn")
-        ) {
-          Icon(Icons.Default.Refresh, contentDescription = "Simulate Laptop Incoming", tint = NavyPrimary, modifier = Modifier.size(16.dp))
-        }
-      }
-
-      when (val state = uiState) {
-        is WorkspaceUiState.Loading -> {
-          Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = NavyPrimary)
-          }
-        }
-        is WorkspaceUiState.Error -> {
-          Text("Error loading files: ${state.message}", color = TextSecondary, fontSize = 12.sp)
-        }
-        is WorkspaceUiState.Success -> {
-          // Filter files received specifically from Laptop
-          val laptopFiles = state.items.filter { item ->
-            item.type == ItemType.MEDIA.name &&
-              (item.tags.contains("sender_laptop") || item.tags.contains("laptop")) &&
-              !item.tags.contains("sender_mobile")
-          }
-
-          if (laptopFiles.isEmpty()) {
-            Box(
-              modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(bottom = 90.dp)
-                .background(CleanSurface, RoundedCornerShape(12.dp))
-                .border(1.dp, CleanOutline, RoundedCornerShape(12.dp))
-                .padding(24.dp),
-              contentAlignment = Alignment.Center
-            ) {
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.Computer, contentDescription = null, tint = TextMuted, modifier = Modifier.size(34.dp))
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                  text = "No files received from Laptop yet",
-                  fontSize = 13.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = TextPrimary
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                  text = "Files sent from your Laptop will be received and auto-prompted here.",
-                  fontSize = 11.sp,
-                  color = TextMuted
-                )
-              }
-            }
-          } else {
-            LazyColumn(
-              verticalArrangement = Arrangement.spacedBy(8.dp),
-              contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 90.dp),
-              modifier = Modifier.fillMaxWidth().weight(1f).testTag("received_laptop_files_list")
-            ) {
-              items(laptopFiles, key = { it.id }) { file ->
-                Card(
-                  shape = RoundedCornerShape(10.dp),
-                  colors = CardDefaults.cardColors(containerColor = CleanSurface),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, CleanOutline),
-                  modifier = Modifier.fillMaxWidth().testTag("received_laptop_file_${file.id}")
+              if (mediaItems.isEmpty()) {
+                Box(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 24.dp),
+                  contentAlignment = Alignment.Center
                 ) {
-                  Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Box(
-                      modifier = Modifier.size(38.dp).background(NavyLight, CircleShape),
-                      contentAlignment = Alignment.Center
+                  Text(
+                    text = "No transfer records yet. Send or receive a file to begin.",
+                    fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                    fontSize = 12.sp,
+                    color = TextMuted
+                  )
+                }
+              } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  mediaItems.forEach { item ->
+                    val isSaved = savedFileUris.containsKey(item.id)
+                    Surface(
+                      color = Color(0xFFF8FAFC),
+                      shape = RoundedCornerShape(8.dp),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                      modifier = Modifier.fillMaxWidth()
                     ) {
-                      Icon(Icons.Default.FileDownload, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(20.dp))
-                    }
+                      Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                      ) {
+                        Box(
+                          modifier = Modifier
+                            .size(34.dp)
+                            .background(Color.White, RoundedCornerShape(6.dp))
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(6.dp)),
+                          contentAlignment = Alignment.Center
+                        ) {
+                          Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(18.dp))
+                        }
 
-                    Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
 
-                    Column(modifier = Modifier.weight(1f)) {
-                      Text(file.title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                      Text("From Laptop • http://$normalizedHost/events", fontSize = 10.sp, color = TextSecondary)
-                    }
+                        Column(modifier = Modifier.weight(1f)) {
+                          Text(item.title, fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.5.sp, color = NavyPrimary, maxLines = 1, overflow = TextOverflow.Clip)
+                          Text(item.content, fontFamily = com.example.ui.theme.PlusJakartaFontFamily, fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Clip)
+                        }
 
-                    Button(
-                      onClick = {
-                        Toast.makeText(context, "Downloaded ${file.title}", Toast.LENGTH_SHORT).show()
-                      },
-                      colors = ButtonDefaults.buttonColors(containerColor = NavyLight, contentColor = NavyPrimary),
-                      shape = RoundedCornerShape(6.dp),
-                      contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                      modifier = Modifier.testTag("download_laptop_file_${file.id}")
-                    ) {
-                      Text("Download", fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                    }
+                        if (isSaved) {
+                          Button(
+                            onClick = {
+                              val uri = savedFileUris[item.id]!!
+                              FileDownloadHelper.openFileInExternalViewer(context = context, uri = uri, mimeType = FileDownloadHelper.getMimeType(item.title))
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = NavyLight, contentColor = NavyPrimary),
+                            shape = RoundedCornerShape(6.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                          ) {
+                            Text("Open", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                          }
+                        } else {
+                          OutlinedButton(
+                            onClick = {
+                              coroutineScope.launch {
+                                FileDownloadHelper.downloadFileFromLaptop(context = context, hostUrl = normalizedHost, fileName = item.title, fileUrl = item.imageUrl, fallbackContent = item.content)
+                                  .onSuccess { uri ->
+                                    savedFileUris[item.id] = uri
+                                    Toast.makeText(context, "Saved to Downloads/NIJO_PVT in File Manager!", Toast.LENGTH_SHORT).show()
+                                  }
+                              }
+                            },
+                            shape = RoundedCornerShape(6.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                          ) {
+                            Text("Save", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                          }
+                        }
 
-                    IconButton(onClick = { viewModel.deleteItem(file.id) }) {
-                      Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted, modifier = Modifier.size(16.dp))
+                        IconButton(onClick = { viewModel.deleteItem(item.id) }, modifier = Modifier.size(26.dp)) {
+                          Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted, modifier = Modifier.size(14.dp))
+                        }
+                      }
                     }
                   }
                 }
               }
             }
           }
+        }
+
+        CrossDeviceTab.RECEIVE_FILE -> {
+          // Tab 2: Receive File View
+          Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(
+              modifier = Modifier.padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Column {
+                  Text("Received Files", fontFamily = com.example.ui.theme.OutfitFontFamily, fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+                  Text("Saved to Downloads/NIJO_PVT on phone storage", fontFamily = com.example.ui.theme.PlusJakartaFontFamily, fontSize = 11.sp, color = TextSecondary)
+                }
+
+                Button(
+                  onClick = {
+                    FileDownloadHelper.openDownloadsFolder(context)
+                    Toast.makeText(context, "Opening Downloads / NIJO_PVT folder", Toast.LENGTH_SHORT).show()
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                  shape = RoundedCornerShape(8.dp),
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                  modifier = Modifier.height(32.dp)
+                ) {
+                  Icon(Icons.Default.Folder, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("File Manager", fontSize = 10.5.sp, fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+              }
+
+              val laptopFiles = mediaItems.filter {
+                (it.tags.contains("sender_laptop") || it.tags.contains("laptop")) && !it.tags.contains("sender_mobile")
+              }
+
+              if (laptopFiles.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Computer, contentDescription = null, tint = TextMuted, modifier = Modifier.size(36.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("No files received from Laptop yet", fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = NavyPrimary)
+                    Text("Files transmitted from Laptop Hub arrive automatically.", fontFamily = com.example.ui.theme.PlusJakartaFontFamily, fontSize = 11.sp, color = TextMuted)
+                  }
+                }
+              } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                  laptopFiles.forEach { file ->
+                    val isSaved = savedFileUris.containsKey(file.id)
+                    Surface(
+                      color = Color(0xFFF8FAFC),
+                      shape = RoundedCornerShape(8.dp),
+                      border = androidx.compose.foundation.BorderStroke(1.dp, if (isSaved) Color(0xFF22C55E) else Color(0xFFE2E8F0)),
+                      modifier = Modifier.fillMaxWidth()
+                    ) {
+                      Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                          modifier = Modifier.size(36.dp).background(if (isSaved) Color(0xFFE8F5E9) else NavyLight, CircleShape),
+                          contentAlignment = Alignment.Center
+                        ) {
+                          Icon(if (isSaved) Icons.Default.CheckCircle else Icons.Default.FileDownload, contentDescription = null, tint = if (isSaved) Color(0xFF16A34A) else NavyPrimary, modifier = Modifier.size(18.dp))
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                          Text(file.title, fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.5.sp, color = NavyPrimary)
+                          Text(if (isSaved) "✓ Saved in Phone Storage" else "Ready to download", fontFamily = com.example.ui.theme.PlusJakartaFontFamily, fontSize = 10.sp, color = if (isSaved) Color(0xFF16A34A) else TextSecondary)
+                        }
+
+                        Button(
+                          onClick = {
+                            coroutineScope.launch {
+                              FileDownloadHelper.downloadFileFromLaptop(context = context, hostUrl = normalizedHost, fileName = file.title, fileUrl = file.imageUrl, fallbackContent = file.content)
+                                .onSuccess { uri ->
+                                  savedFileUris[file.id] = uri
+                                  Toast.makeText(context, "Saved to Downloads/NIJO_PVT in File Manager!", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                          },
+                          colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                          shape = RoundedCornerShape(6.dp),
+                          contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                          modifier = Modifier.height(28.dp)
+                        ) {
+                          Text(if (isSaved) "Saved" else "Download", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        CrossDeviceTab.UNIVERSAL_CLIPBOARD -> {
+          // Tab 3: Universal Clipboard
+          Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(
+              modifier = Modifier.padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+              Text("Universal Cross-Device Clipboard", fontFamily = com.example.ui.theme.OutfitFontFamily, fontSize = 14.5.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+              Text("Shared clipboard text synced across Phone, Laptop, and TV via Wi-Fi Mesh.", fontFamily = com.example.ui.theme.PlusJakartaFontFamily, fontSize = 11.sp, color = TextSecondary)
+
+              OutlinedTextField(
+                value = clipboardInputText,
+                onValueChange = { clipboardInputText = it },
+                label = { Text("Clipboard text to broadcast") },
+                placeholder = { Text("Paste note, code, or syllabus text...") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedBorderColor = NavyPrimary,
+                  focusedLabelColor = NavyPrimary
+                )
+              )
+
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(
+                  onClick = {
+                    if (clipboardInputText.isNotBlank()) {
+                      viewModel.createNote("Clipboard Sync", clipboardInputText, listOf("clipboard", "cross_device"))
+                      Toast.makeText(context, "Broadcasted to Laptop & TV!", Toast.LENGTH_SHORT).show()
+                      clipboardInputText = ""
+                    }
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                  shape = RoundedCornerShape(8.dp)
+                ) {
+                  Text("Broadcast to Devices", fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 5. DEDICATED MOBILE SETUP UI BOTTOM SHEET ("Setup Hub")
+    if (showMobileSetupSheet) {
+      ModalBottomSheet(
+        onDismissRequest = { showMobileSetupSheet = false },
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Color.White
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 14.dp)
+            .verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Column {
+              Text(
+                text = "Mobile Hub Connection Setup",
+                fontFamily = com.example.ui.theme.OutfitFontFamily,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = NavyPrimary
+              )
+              Text(
+                text = "Configure Wi-Fi Direct Mesh & Laptop Server",
+                fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                fontSize = 11.5.sp,
+                color = TextSecondary
+              )
+            }
+
+            IconButton(onClick = { showMobileSetupSheet = false }) {
+              Icon(Icons.Default.Close, contentDescription = "Close", tint = NavyPrimary)
+            }
+          }
+
+          HorizontalDivider(color = Color(0xFFE2E8F0))
+
+          // 1. Wi-Fi Status Card
+          Surface(
+            color = if (isWifiConnected) Color(0xFFF0FDF4) else NavyLight,
+            shape = RoundedCornerShape(10.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (isWifiConnected) Color(0xFF86EFAC) else Color(0xFFCBD5E1)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Row(
+              modifier = Modifier.padding(12.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(Icons.Default.Wifi, contentDescription = null, tint = if (isWifiConnected) Color(0xFF16A34A) else NavyPrimary, modifier = Modifier.size(24.dp))
+              Spacer(modifier = Modifier.width(10.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = if (isWifiConnected) "Connected to $wifiSsid" else "Disconnected from Wi-Fi",
+                  fontFamily = com.example.ui.theme.OutfitFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 13.sp,
+                  color = NavyPrimary
+                )
+                Text(
+                  text = if (isWifiConnected) "Local network ready for instant peer sharing" else "Connect to your home Wi-Fi for local mesh transfer",
+                  fontFamily = com.example.ui.theme.PlusJakartaFontFamily,
+                  fontSize = 11.sp,
+                  color = TextSecondary
+                )
+              }
+            }
+          }
+
+          // 2. Laptop Host IP Field & Test
+          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Laptop Hub Server Address:", fontFamily = com.example.ui.theme.OutfitFontFamily, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+            OutlinedTextField(
+              value = hostIpInput,
+              onValueChange = {
+                hostIpInput = it
+                sharedPreferences.edit().putString("saved_host_ip", it).apply()
+              },
+              placeholder = { Text("192.168.1.3:4000") },
+              singleLine = true,
+              modifier = Modifier.fillMaxWidth(),
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = NavyPrimary,
+                focusedLabelColor = NavyPrimary
+              )
+            )
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Button(
+                onClick = {
+                  val target = cleanHostAddress(hostIpInput)
+                  checkServerStatus(target, forceConnectedOnManualClick = true)
+                  Toast.makeText(context, "Connecting to $target...", Toast.LENGTH_SHORT).show()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f)
+              ) {
+                Text("Test & Save", fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = Color.White)
+              }
+
+              OutlinedButton(
+                onClick = { runAutoDiscovery() },
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f)
+              ) {
+                Icon(Icons.Default.Search, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Auto-Detect", fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = NavyPrimary)
+              }
+            }
+          }
+
+          // 3. Scan QR Code Action
+          Button(
+            onClick = {
+              showMobileSetupSheet = false
+              try {
+                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+              } catch (_: Exception) {
+                showQrScannerOverlay = true
+              }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = NavyLight),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Scan QR Code from Laptop Screen", fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, color = NavyPrimary)
+          }
+
+          // 4. Quick 3-Step Setup Instructions
+          Surface(
+            color = Color(0xFFF8FAFC),
+            shape = RoundedCornerShape(10.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              Text("Easy 3-Step Setup Guide:", fontFamily = com.example.ui.theme.OutfitFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = NavyPrimary)
+              Text("1. Connect Phone, Laptop, and TV to the same Wi-Fi ($wifiSsid).", fontSize = 11.sp, color = TextPrimary)
+              Text("2. Run server on Laptop (node server.js on port 4000).", fontSize = 11.sp, color = TextPrimary)
+              Text("3. Tap 'Scan QR' to point at laptop or click 'Auto-Detect'.", fontSize = 11.sp, color = TextPrimary)
+            }
+          }
+
+          Spacer(modifier = Modifier.height(16.dp))
         }
       }
     }
@@ -1124,6 +1593,106 @@ fun FilesScreen(
         dismissButton = {
           TextButton(onClick = { showTroubleshootDialog = false }) {
             Text("Close", color = TextSecondary)
+          }
+        }
+      )
+    }
+
+    // Sleek IP Configuration & QR Dialog
+    if (showIpConfigDialog) {
+      AlertDialog(
+        onDismissRequest = { showIpConfigDialog = false },
+        title = {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Wifi, contentDescription = null, tint = NavyPrimary)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Laptop Hub Connection", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = NavyPrimary)
+          }
+        },
+        text = {
+          Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+              text = "Enter your Laptop's Wi-Fi IP and port (default port 4000) or scan the QR code from the laptop browser.",
+              fontSize = 12.sp,
+              color = TextSecondary
+            )
+
+            OutlinedTextField(
+              value = hostIpInput,
+              onValueChange = {
+                hostIpInput = it
+                sharedPreferences.edit().putString("saved_host_ip", it).apply()
+              },
+              label = { Text("Server IP:Port") },
+              placeholder = { Text("192.168.1.3:4000") },
+              singleLine = true,
+              modifier = Modifier
+                .fillMaxWidth()
+                .testTag("host_ip_input"),
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = NavyPrimary,
+                unfocusedBorderColor = CleanOutline,
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary
+              )
+            )
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+              Button(
+                onClick = {
+                  try {
+                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                  } catch (_: Exception) {
+                    showQrScannerOverlay = true
+                  }
+                  showIpConfigDialog = false
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = NavyLight),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f)
+              ) {
+                Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Scan QR", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+              }
+
+              Button(
+                onClick = {
+                  runAutoDiscovery()
+                  showIpConfigDialog = false
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = NavyLight),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1.2f)
+              ) {
+                Icon(Icons.Default.Search, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Auto-Detect", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
+              }
+            }
+          }
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              val target = if (hostIpInput.isNotBlank()) cleanHostAddress(hostIpInput) else "192.168.1.3:4000"
+              hostIpInput = target
+              sharedPreferences.edit().putString("saved_host_ip", target).apply()
+              checkServerStatus(target, forceConnectedOnManualClick = true)
+              showIpConfigDialog = false
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+            modifier = Modifier.testTag("connect_default_ip_btn")
+          ) {
+            Text("Save & Connect", color = Color.White, fontWeight = FontWeight.Bold)
+          }
+        },
+        dismissButton = {
+          TextButton(onClick = { showIpConfigDialog = false }) {
+            Text("Cancel", color = TextSecondary)
           }
         }
       )
@@ -1716,7 +2285,8 @@ suspend fun autoDetectLaptopHub(currentHost: String): String? {
 suspend fun startSseEventListener(
   context: Context,
   hostUrl: String,
-  onFileReceived: (String, String) -> Unit
+  onFileReceived: (fileName: String, fileContent: String, fileUrl: String?) -> Unit,
+  onSystemUpdate: ((title: String, body: String, themeColor: String?, fontStyle: String?) -> Unit)? = null
 ) {
   withContext(Dispatchers.IO) {
     try {
@@ -1732,10 +2302,42 @@ suspend fun startSseEventListener(
         for (line in lines) {
           if (line.startsWith("data:")) {
             val json = line.removePrefix("data:").trim()
-            if (json.contains("\"sender\":\"laptop\"") && (json.contains("\"target\":\"mobile\"") || json.contains("\"target\":\"all\""))) {
-              val fname = json.substringAfter("\"fileName\":\"", "incoming_laptop_doc.pdf").substringBefore("\"")
+
+            // 1. Antigravity System Update & Remote Configuration broadcast
+            if (json.contains("\"type\":\"system-update\"") || json.contains("\"type\":\"config-update\"") || json.contains("\"type\":\"ui-update\"")) {
+              val title = if (json.contains("\"title\":\"")) json.substringAfter("\"title\":\"", "Antigravity Update").substringBefore("\"") else "Antigravity Update"
+              val body = if (json.contains("\"body\":\"")) json.substringAfter("\"body\":\"", "System update received").substringBefore("\"")
+                         else if (json.contains("\"message\":\"")) json.substringAfter("\"message\":\"", "System update received").substringBefore("\"") else "System update received"
+              val themeColor = if (json.contains("\"themeColor\":\"")) json.substringAfter("\"themeColor\":\"", "").substringBefore("\"").ifBlank { null } else null
+              val fontStyle = if (json.contains("\"fontStyle\":\"")) json.substringAfter("\"fontStyle\":\"", "").substringBefore("\"").ifBlank { null } else null
+
               withContext(Dispatchers.Main) {
-                onFileReceived(fname, "Received from Laptop via SSE $fullUrl")
+                onSystemUpdate?.invoke(title, body, themeColor, fontStyle)
+              }
+            }
+
+            // 2. Incoming File Transfer broadcast
+            val isFromLaptop = json.contains("\"sender\":\"laptop\"") ||
+              json.contains("\"sender\":\"web\"") ||
+              (json.contains("\"type\":\"file-transfer\"") && !json.contains("\"sender\":\"mobile\""))
+            val isForMobile = json.contains("\"target\":\"mobile\"") ||
+              json.contains("\"target\":\"all\"") ||
+              !json.contains("\"target\":\"")
+
+            if (isFromLaptop && isForMobile) {
+              val fname = if (json.contains("\"fileName\":\"")) {
+                json.substringAfter("\"fileName\":\"", "incoming_file.pdf").substringBefore("\"")
+              } else if (json.contains("\"name\":\"")) {
+                json.substringAfter("\"name\":\"", "incoming_file.pdf").substringBefore("\"")
+              } else {
+                "incoming_laptop_doc.pdf"
+              }
+              val fileUrl = if (json.contains("\"url\":\"")) {
+                json.substringAfter("\"url\":\"", "").substringBefore("\"").ifBlank { null }
+              } else null
+
+              withContext(Dispatchers.Main) {
+                onFileReceived(fname, "Received from Laptop via SSE $fullUrl", fileUrl)
               }
             }
           }
@@ -1757,6 +2359,84 @@ suspend fun startSseEventListener(
 /**
  * Executes a single HTTP multipart/form-data POST request to targetUrl
  */
+/**
+ * Uploads file via Base64 JSON payload as a high-reliability fallback when multipart upload fails.
+ */
+private fun executeBase64Upload(
+  context: Context,
+  targetUrl: String,
+  fileUri: Uri?,
+  fileName: String,
+  target: String,
+  onProgress: (Float) -> Unit
+): Result<String> {
+  var connection: HttpURLConnection? = null
+  try {
+    val cleanFileName = fileName.replace("\"", "").replace("\r", "").replace("\n", "").trim()
+    val bytes = if (fileUri != null) {
+      try {
+        context.contentResolver.openInputStream(fileUri)?.use { it.readBytes() }
+      } catch (_: Exception) { null }
+    } else null
+    val base64Data = if (bytes != null && bytes.isNotEmpty()) {
+      android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+    } else {
+      android.util.Base64.encodeToString("NIJO PVT file transfer: $cleanFileName".toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+    }
+
+    onProgress(0.35f)
+    val jsonObject = org.json.JSONObject().apply {
+      put("fileName", cleanFileName)
+      put("fileBase64", base64Data)
+      put("sender", "mobile")
+      put("target", target)
+    }
+    val jsonBytes = jsonObject.toString().toByteArray(Charsets.UTF_8)
+
+    val url = URL(targetUrl)
+    connection = (url.openConnection() as HttpURLConnection).apply {
+      requestMethod = "POST"
+      connectTimeout = 10000
+      readTimeout = 60000
+      doOutput = true
+      doInput = true
+      useCaches = false
+      setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+      setRequestProperty("User-Agent", "NijoMobileApp/1.0")
+      setRequestProperty("X-Sender", "mobile")
+      setRequestProperty("X-Target", target)
+      setRequestProperty("X-Filename", cleanFileName)
+    }
+
+    onProgress(0.65f)
+    connection.outputStream.use { os ->
+      os.write(jsonBytes)
+      os.flush()
+    }
+    onProgress(0.92f)
+
+    val responseCode = connection.responseCode
+    val responseText = if (responseCode in 200..399) {
+      try { connection.inputStream.bufferedReader().use { it.readText() } } catch (_: Exception) { "HTTP $responseCode" }
+    } else {
+      try { connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $responseCode" } catch (_: Exception) { "HTTP $responseCode" }
+    }
+    onProgress(1.0f)
+    return if (responseCode in 200..399) {
+      Result.success(responseText)
+    } else {
+      Result.failure(Exception("HTTP $responseCode: $responseText"))
+    }
+  } catch (e: Exception) {
+    return Result.failure(e)
+  } finally {
+    try { connection?.disconnect() } catch (_: Exception) {}
+  }
+}
+
+/**
+ * Executes a single HTTP multipart/form-data POST request to targetUrl
+ */
 private fun executeMultipartUpload(
   context: Context,
   targetUrl: String,
@@ -1769,8 +2449,9 @@ private fun executeMultipartUpload(
   var connection: HttpURLConnection? = null
   try {
     val url = URL(targetUrl)
-    val boundary = "----NijoMobileUploadBoundary${System.currentTimeMillis()}"
+    val boundary = "Boundary" + System.currentTimeMillis() + java.util.UUID.randomUUID().toString().replace("-", "").take(10)
     val crlf = "\r\n"
+    val cleanFileName = fileName.replace("\"", "").replace("\r", "").replace("\n", "").trim()
 
     connection = (url.openConnection() as HttpURLConnection).apply {
       requestMethod = "POST"
@@ -1783,7 +2464,7 @@ private fun executeMultipartUpload(
       setRequestProperty("User-Agent", "NijoMobileApp/1.0")
       setRequestProperty("X-Sender", "mobile")
       setRequestProperty("X-Target", target)
-      setRequestProperty("X-Filename", fileName)
+      setRequestProperty("X-Filename", cleanFileName)
     }
 
     onProgress(0.08f)
@@ -1794,24 +2475,14 @@ private fun executeMultipartUpload(
       bos.write(str.toByteArray(Charsets.UTF_8))
     }
 
-    // 1. Form field: sender ("mobile")
-    writeUtf8("--$boundary$crlf")
-    writeUtf8("Content-Disposition: form-data; name=\"sender\"$crlf$crlf")
-    writeUtf8("mobile$crlf")
-
-    // 2. Form field: target ("laptop" or "tv")
-    writeUtf8("--$boundary$crlf")
-    writeUtf8("Content-Disposition: form-data; name=\"target\"$crlf$crlf")
-    writeUtf8("$target$crlf")
-
-    // 3. Form field: file (binary data with original filename)
+    // 1. Form field: file (binary data with original filename)
     val mimeType = if (fileUri != null) {
       context.contentResolver.getType(fileUri) ?: "application/octet-stream"
     } else {
       "application/octet-stream"
     }
     writeUtf8("--$boundary$crlf")
-    writeUtf8("Content-Disposition: form-data; name=\"file\"; filename=\"$fileName\"$crlf")
+    writeUtf8("Content-Disposition: form-data; name=\"file\"; filename=\"$cleanFileName\"$crlf")
     writeUtf8("Content-Type: $mimeType$crlf$crlf")
     bos.flush()
 
@@ -1835,18 +2506,31 @@ private fun executeMultipartUpload(
         while (input.read(buffer).also { bytesRead = it } != -1) {
           bos.write(buffer, 0, bytesRead)
           totalWritten += bytesRead
-          val progress = (totalWritten.toFloat() / totalExpected.toFloat()).coerceIn(0.12f, 0.95f)
+          val progress = (totalWritten.toFloat() / totalExpected.toFloat()).coerceIn(0.12f, 0.92f)
           onProgress(progress)
         }
         bos.flush()
       }
     } else {
-      val fallbackBytes = "NIJO PVT file transfer: $fileName".toByteArray(Charsets.UTF_8)
+      val fallbackBytes = "NIJO PVT file transfer: $cleanFileName".toByteArray(Charsets.UTF_8)
       bos.write(fallbackBytes)
       bos.flush()
     }
 
-    writeUtf8("$crlf--$boundary--$crlf")
+    writeUtf8(crlf)
+
+    // 2. Form field: sender ("mobile")
+    writeUtf8("--$boundary$crlf")
+    writeUtf8("Content-Disposition: form-data; name=\"sender\"$crlf$crlf")
+    writeUtf8("mobile$crlf")
+
+    // 3. Form field: target ("laptop" or "tv")
+    writeUtf8("--$boundary$crlf")
+    writeUtf8("Content-Disposition: form-data; name=\"target\"$crlf$crlf")
+    writeUtf8("$target$crlf")
+
+    // Closing boundary delimiter
+    writeUtf8("--$boundary--$crlf")
     bos.flush()
 
     onProgress(0.98f)
@@ -1883,11 +2567,8 @@ private fun executeMultipartUpload(
 
 /**
  * Asynchronously streams real binary file bytes via HTTP POST multipart/form-data
- * directly to the Laptop Server (default http://192.168.1.2:4000/upload).
- * Form fields:
- * - 'file': binary file stream from contentResolver.openInputStream(fileUri)
- * - 'sender': "mobile"
- * - 'target': "laptop" or "tv"
+ * directly to the Laptop Server (default http://192.168.1.3:4000/upload).
+ * Includes automatic Base64 JSON fallback if multipart parser rejects the payload.
  */
 suspend fun sendPostRequestWithProgress(
   context: Context,
@@ -1902,7 +2583,7 @@ suspend fun sendPostRequestWithProgress(
     val cleanHost = cleanHostAddress(hostUrl)
     val primaryUrl = buildFullUrl(cleanHost, "/upload")
 
-    // Attempt 1: Primary endpoint http://<cleanHost>/upload
+    // Attempt 1: Standard multipart/form-data to http://<cleanHost>/upload
     val attempt1 = executeMultipartUpload(context, primaryUrl, fileUri, fileName, fileSize, target, onProgress)
     if (attempt1.isSuccess) {
       return@withContext attempt1
@@ -1911,7 +2592,18 @@ suspend fun sendPostRequestWithProgress(
     val err1 = attempt1.exceptionOrNull()
     val errMsg1 = err1?.message ?: ""
 
-    // Attempt 2: If 404, fallback to /api/upload
+    // Attempt 2: If multipart failed (e.g. HTTP 400 No file uploaded), try Base64 JSON fallback to /upload or /api/upload-raw
+    val attemptBase64 = executeBase64Upload(context, primaryUrl, fileUri, fileName, target, onProgress)
+    if (attemptBase64.isSuccess) {
+      return@withContext attemptBase64
+    }
+
+    val attemptBase64Raw = executeBase64Upload(context, buildFullUrl(cleanHost, "/api/upload-raw"), fileUri, fileName, target, onProgress)
+    if (attemptBase64Raw.isSuccess) {
+      return@withContext attemptBase64Raw
+    }
+
+    // Attempt 3: If 404, fallback to /api/upload
     if (errMsg1.contains("404")) {
       val fallbackApiUrl = buildFullUrl(cleanHost, "/api/upload")
       val attemptApi = executeMultipartUpload(context, fallbackApiUrl, fileUri, fileName, fileSize, target, onProgress)
@@ -1920,7 +2612,7 @@ suspend fun sendPostRequestWithProgress(
       }
     }
 
-    // Attempt 3: If port was 4000 and refused connection, check port 3000 in case server was started on port 3000
+    // Attempt 4: If port was 4000 and refused connection, check port 3000 in case server was started on port 3000
     if (cleanHost.contains(":4000")) {
       val port3000Url = "http://" + cleanHost.replace(":4000", ":3000") + "/upload"
       val attempt3000 = executeMultipartUpload(context, port3000Url, fileUri, fileName, fileSize, target, onProgress)
@@ -1929,7 +2621,7 @@ suspend fun sendPostRequestWithProgress(
       }
     }
 
-    // Attempt 4: If running in emulator and 192.168.* was unreachable, try 10.0.2.2:4000 and 10.0.2.2:3000
+    // Attempt 5: If running in emulator and 192.168.* was unreachable, try 10.0.2.2:4000 and 10.0.2.2:3000
     if (cleanHost.startsWith("192.168.") && (err1 is java.net.ConnectException || errMsg1.contains("connect", ignoreCase = true))) {
       val emulatorUrl4000 = "http://10.0.2.2:4000/upload"
       val attemptEmu4000 = executeMultipartUpload(context, emulatorUrl4000, fileUri, fileName, fileSize, target, onProgress)

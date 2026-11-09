@@ -8,11 +8,12 @@ val CleanSurface = Color(0xFFFFFFFF)
 val CleanSurfaceVariant = Color(0xFFF1F5F9)
 val CleanOutline = Color(0xFFE2E8F0)
 
-// Navy Blue Palette
-val NavyPrimary = Color(0xFF0F294A) // Deep Classic Navy
-val NavySecondary = Color(0xFF1E3A8A) // Elegant Royal Navy
-val NavyLight = Color(0xFFE0E7FF) // Soft Navy Tint
-val NavyBorder = Color(0xFF2563EB)
+// Modern Lighter Royal Navy & Cobalt Palette (Soft, airy and modern)
+val NavyPrimary = Color(0xFF1E3A8A) // Lighter Royal Blue (Softened from #0F294A)
+val NavyAccent = Color(0xFF2563EB) // Bright Modern Accent Blue
+val NavySecondary = Color(0xFF3B82F6) // Clear Royal Sky
+val NavyLight = Color(0xFFEFF6FF) // Soft Airy Blue Tint
+val NavyBorder = Color(0xFFBFDBFE)
 
 val StudioTeal = Color(0xFF0284C7)
 val StudioTealLight = Color(0xFFE0F2FE)

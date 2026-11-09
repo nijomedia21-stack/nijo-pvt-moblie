@@ -1,10 +1,14 @@
 package com.example.ui
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,35 +22,34 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.School
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Today
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,33 +60,34 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.CustomNamedAiFloatingWidget
-import com.example.ui.components.DeviceDisplayMode
-import com.example.ui.components.DeviceSyncStatusHeader
 import com.example.ui.components.FilesScreen
 import com.example.ui.components.FreelanceDesignScreen
+import com.example.ui.components.HomeScreen
 import com.example.ui.components.MalayalamCalendarScreen
 import com.example.ui.components.StudyScreen
 import com.example.ui.components.TasksScreen
 import com.example.ui.theme.CleanBackground
 import com.example.ui.theme.CleanOutline
 import com.example.ui.theme.CleanSurface
-import com.example.ui.theme.CleanSurfaceVariant
 import com.example.ui.theme.NavyLight
 import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
+import com.example.ui.theme.NeonMint
+import com.example.ui.theme.OmniSyncTheme
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VividViolet
 import com.example.ui.theme.VividVioletLight
 import com.example.ui.viewmodel.AppWorkspaceMode
 import com.example.ui.viewmodel.WorkspaceViewModel
+import kotlinx.coroutines.launch
 
-enum class NijoTab {
-  TODAY,
-  CALENDAR,
-  FILES,
-  STUDY
+enum class NijoTab(val title: String) {
+  HOME("Home"),
+  TASKS("Tasks"),
+  CALENDAR("Calendar"),
+  STUDY("Study"),
+  FILES("Static Files")
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -93,368 +97,368 @@ fun AdaptiveWorkspaceApp(
   onSignOut: () -> Unit
 ) {
   val context = LocalContext.current
-  var selectedTab by remember { mutableStateOf(NijoTab.TODAY) }
+  val coroutineScope = rememberCoroutineScope()
+
+  // 5 screens in exact user order: 0: HOME, 1: TASKS, 2: CALENDAR, 3: STUDY, 4: STATIC FILES
+  val pagerState = rememberPagerState(initialPage = 0) { 5 }
   var aiCustomName by remember { mutableStateOf("Nijo Copilot") }
+  var showAiChatDialog by remember { mutableStateOf(false) }
+
+  // Lambda to trigger PDF upload in study screen
+  var studyPdfUploadTrigger by remember { mutableStateOf<(() -> Unit)?>(null) }
 
   val currentWorkspaceMode by workspaceViewModel.workspaceMode.collectAsState()
-  val transferPin by workspaceViewModel.transferSecurityPin.collectAsState()
+  val remoteConfig by workspaceViewModel.remoteAppConfig.collectAsState()
   val isDesignMode = currentWorkspaceMode == AppWorkspaceMode.FREELANCE_DESIGNER
 
-  var showModeSwitcherSheet by remember { mutableStateOf(false) }
-  var showSettingsDialog by remember { mutableStateOf(false) }
-
-  Scaffold(
-    modifier = Modifier
-      .fillMaxSize()
-      .background(CleanBackground)
-      .statusBarsPadding()
-      .navigationBarsPadding(),
-    containerColor = CleanBackground,
-    topBar = {
-      // Top Status Header with Logo </>, Dual Mode Switcher pill, and Settings button
-      DeviceSyncStatusHeader(
-        currentMode = DeviceDisplayMode.MOBILE,
-        workspaceMode = currentWorkspaceMode,
-        onModeChanged = { /* Dedicated Mobile App */ },
-        onOpenModeSwitcher = { showModeSwitcherSheet = true },
-        onOpenSettings = { showSettingsDialog = true },
-        onSignOutClicked = onSignOut
-      )
-    },
-    bottomBar = {
-      NavigationBar(
-        containerColor = CleanSurface,
-        contentColor = TextPrimary,
-        modifier = Modifier
-          .border(1.dp, CleanOutline)
-          .testTag("mobile_bottom_nav")
-      ) {
-        NavigationBarItem(
-          selected = selectedTab == NijoTab.TODAY,
-          onClick = { selectedTab = NijoTab.TODAY },
-          icon = { Icon(Icons.Default.Today, contentDescription = "Today") },
-          label = { Text("Today", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-          colors = NavigationBarItemDefaults.colors(
-            selectedIconColor = NavyPrimary,
-            selectedTextColor = NavyPrimary,
-            indicatorColor = NavyLight,
-            unselectedIconColor = TextMuted,
-            unselectedTextColor = TextMuted
-          ),
-          modifier = Modifier.testTag("nav_tab_today")
-        )
-
-        NavigationBarItem(
-          selected = selectedTab == NijoTab.CALENDAR,
-          onClick = { selectedTab = NijoTab.CALENDAR },
-          icon = { Icon(Icons.Default.CalendarMonth, contentDescription = "Calendar") },
-          label = { Text("Calendar", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-          colors = NavigationBarItemDefaults.colors(
-            selectedIconColor = NavyPrimary,
-            selectedTextColor = NavyPrimary,
-            indicatorColor = NavyLight,
-            unselectedIconColor = TextMuted,
-            unselectedTextColor = TextMuted
-          ),
-          modifier = Modifier.testTag("nav_tab_calendar")
-        )
-
-        NavigationBarItem(
-          selected = selectedTab == NijoTab.FILES,
-          onClick = { selectedTab = NijoTab.FILES },
-          icon = { Icon(Icons.Default.Folder, contentDescription = "Files") },
-          label = { Text("Files", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-          colors = NavigationBarItemDefaults.colors(
-            selectedIconColor = NavyPrimary,
-            selectedTextColor = NavyPrimary,
-            indicatorColor = NavyLight,
-            unselectedIconColor = TextMuted,
-            unselectedTextColor = TextMuted
-          ),
-          modifier = Modifier.testTag("nav_tab_files")
-        )
-
-        NavigationBarItem(
-          selected = selectedTab == NijoTab.STUDY,
-          onClick = { selectedTab = NijoTab.STUDY },
-          icon = {
-            Box(
-              modifier = Modifier.combinedClickable(
-                onClick = { selectedTab = NijoTab.STUDY },
-                onLongClick = { showModeSwitcherSheet = true }
-              )
-            ) {
-              Icon(
-                if (isDesignMode) Icons.Default.Palette else Icons.Default.School,
-                contentDescription = if (isDesignMode) "Design" else "Study"
-              )
-            }
-          },
-          label = {
-            Text(
-              if (isDesignMode) "Design" else "Study",
-              fontSize = 11.sp,
-              fontWeight = FontWeight.SemiBold
-            )
-          },
-          colors = NavigationBarItemDefaults.colors(
-            selectedIconColor = if (isDesignMode) VividViolet else NavyPrimary,
-            selectedTextColor = if (isDesignMode) VividViolet else NavyPrimary,
-            indicatorColor = if (isDesignMode) VividVioletLight else NavyLight,
-            unselectedIconColor = TextMuted,
-            unselectedTextColor = TextMuted
-          ),
-          modifier = Modifier
-            .combinedClickable(
-              onClick = { selectedTab = NijoTab.STUDY },
-              onLongClick = { showModeSwitcherSheet = true }
-            )
-            .testTag("nav_tab_study")
-        )
-      }
-    }
-  ) { paddingValues ->
-    Box(
+  OmniSyncTheme(
+    primaryColorHex = remoteConfig.themeColorHex,
+    fontStyle = remoteConfig.fontStyle
+  ) {
+    Scaffold(
       modifier = Modifier
         .fillMaxSize()
-        .padding(paddingValues)
-    ) {
-      // Main Content Switching across the 4 modules
-      when (selectedTab) {
-        NijoTab.TODAY -> TasksScreen(viewModel = workspaceViewModel)
-        NijoTab.CALENDAR -> MalayalamCalendarScreen(viewModel = workspaceViewModel)
-        NijoTab.FILES -> FilesScreen(viewModel = workspaceViewModel)
-        NijoTab.STUDY -> {
-          if (isDesignMode) {
-            FreelanceDesignScreen(viewModel = workspaceViewModel)
-          } else {
-            StudyScreen(viewModel = workspaceViewModel)
-          }
+        .background(CleanBackground)
+        .statusBarsPadding()
+        .navigationBarsPadding(),
+      containerColor = CleanBackground,
+      bottomBar = {
+        NavigationBar(
+          containerColor = CleanSurface,
+          contentColor = TextPrimary,
+          modifier = Modifier
+            .border(1.dp, CleanOutline)
+            .testTag("mobile_bottom_nav")
+        ) {
+          // 0: HOME (ഹോം)
+          NavigationBarItem(
+            selected = pagerState.currentPage == 0,
+            onClick = {
+              coroutineScope.launch {
+                pagerState.animateScrollToPage(0)
+              }
+            },
+            icon = {
+              Icon(
+                Icons.Default.Home,
+                contentDescription = "Home",
+                modifier = Modifier.size(22.dp)
+              )
+            },
+            label = {
+              Text(
+                "Home",
+                fontSize = 11.sp,
+                fontWeight = if (pagerState.currentPage == 0) FontWeight.Bold else FontWeight.Medium
+              )
+            },
+            colors = NavigationBarItemDefaults.colors(
+              selectedIconColor = NavyPrimary,
+              selectedTextColor = NavyPrimary,
+              indicatorColor = NavyLight,
+              unselectedIconColor = TextMuted,
+              unselectedTextColor = TextMuted
+            ),
+            modifier = Modifier.testTag("nav_tab_home")
+          )
+
+          // 1: TASKS (ടാസ്ക്)
+          NavigationBarItem(
+            selected = pagerState.currentPage == 1,
+            onClick = {
+              coroutineScope.launch {
+                pagerState.animateScrollToPage(1)
+              }
+            },
+            icon = {
+              Icon(
+                Icons.Default.TaskAlt,
+                contentDescription = "Tasks",
+                modifier = Modifier.size(22.dp)
+              )
+            },
+            label = {
+              Text(
+                "Tasks",
+                fontSize = 11.sp,
+                fontWeight = if (pagerState.currentPage == 1) FontWeight.Bold else FontWeight.Medium
+              )
+            },
+            colors = NavigationBarItemDefaults.colors(
+              selectedIconColor = NavyPrimary,
+              selectedTextColor = NavyPrimary,
+              indicatorColor = NavyLight,
+              unselectedIconColor = TextMuted,
+              unselectedTextColor = TextMuted
+            ),
+            modifier = Modifier.testTag("nav_tab_tasks")
+          )
+
+          // 2: CALENDAR (കലണ്ടർ)
+          NavigationBarItem(
+            selected = pagerState.currentPage == 2,
+            onClick = {
+              coroutineScope.launch {
+                pagerState.animateScrollToPage(2)
+              }
+            },
+            icon = {
+              Icon(
+                Icons.Default.CalendarMonth,
+                contentDescription = "Calendar",
+                modifier = Modifier.size(22.dp)
+              )
+            },
+            label = {
+              Text(
+                "Calendar",
+                fontSize = 11.sp,
+                fontWeight = if (pagerState.currentPage == 2) FontWeight.Bold else FontWeight.Medium
+              )
+            },
+            colors = NavigationBarItemDefaults.colors(
+              selectedIconColor = NavyPrimary,
+              selectedTextColor = NavyPrimary,
+              indicatorColor = NavyLight,
+              unselectedIconColor = TextMuted,
+              unselectedTextColor = TextMuted
+            ),
+            modifier = Modifier.testTag("nav_tab_calendar")
+          )
+
+          // 3: STUDY (സ്റ്റഡി)
+          NavigationBarItem(
+            selected = pagerState.currentPage == 3,
+            onClick = {
+              coroutineScope.launch {
+                pagerState.animateScrollToPage(3)
+              }
+            },
+            icon = {
+              Icon(
+                if (isDesignMode) Icons.Default.Palette else Icons.Default.School,
+                contentDescription = if (isDesignMode) "Design" else "Study",
+                modifier = Modifier.size(22.dp)
+              )
+            },
+            label = {
+              Text(
+                if (isDesignMode) "Design" else "Study",
+                fontSize = 11.sp,
+                fontWeight = if (pagerState.currentPage == 3) FontWeight.Bold else FontWeight.Medium
+              )
+            },
+            colors = NavigationBarItemDefaults.colors(
+              selectedIconColor = if (isDesignMode) VividViolet else NavyPrimary,
+              selectedTextColor = if (isDesignMode) VividViolet else NavyPrimary,
+              indicatorColor = if (isDesignMode) VividVioletLight else NavyLight,
+              unselectedIconColor = TextMuted,
+              unselectedTextColor = TextMuted
+            ),
+            modifier = Modifier.testTag("nav_tab_study")
+          )
+
+          // 4: STATIC FILES (സ്റ്റാറ്റിക് ഫയൽസ്)
+          NavigationBarItem(
+            selected = pagerState.currentPage == 4,
+            onClick = {
+              coroutineScope.launch {
+                pagerState.animateScrollToPage(4)
+              }
+            },
+            icon = {
+              Icon(
+                Icons.Default.Folder,
+                contentDescription = "Static Files",
+                modifier = Modifier.size(22.dp)
+              )
+            },
+            label = {
+              Text(
+                "Files",
+                fontSize = 11.sp,
+                fontWeight = if (pagerState.currentPage == 4) FontWeight.Bold else FontWeight.Medium
+              )
+            },
+            colors = NavigationBarItemDefaults.colors(
+              selectedIconColor = NavyPrimary,
+              selectedTextColor = NavyPrimary,
+              indicatorColor = NavyLight,
+              unselectedIconColor = TextMuted,
+              unselectedTextColor = TextMuted
+            ),
+            modifier = Modifier.testTag("nav_tab_files")
+          )
         }
       }
+    ) { paddingValues ->
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .padding(paddingValues)
+      ) {
+        // Horizontal Swipe Pager enabling smooth swipe in exact user order
+        HorizontalPager(
+          state = pagerState,
+          modifier = Modifier.fillMaxSize()
+        ) { page ->
+          when (page) {
+            0 -> HomeScreen(
+              viewModel = workspaceViewModel,
+              onNavigateToTab = { targetIndex ->
+                coroutineScope.launch {
+                  pagerState.animateScrollToPage(targetIndex)
+                }
+              },
+              onSignOut = onSignOut
+            )
+            1 -> TasksScreen(viewModel = workspaceViewModel)
+            2 -> MalayalamCalendarScreen(viewModel = workspaceViewModel)
+            3 -> {
+              if (isDesignMode) {
+                FreelanceDesignScreen(viewModel = workspaceViewModel)
+              } else {
+                StudyScreen(
+                  viewModel = workspaceViewModel,
+                  onRegisterUploadTrigger = { trigger ->
+                    studyPdfUploadTrigger = trigger
+                  }
+                )
+              }
+            }
+            4 -> FilesScreen(viewModel = workspaceViewModel)
+          }
+        }
 
-      // Floating Custom-Named AI Assistant Widget
+        // Floating Action Controls:
+        // Rule: Study Mode (tab 3) has AI + Plus 3-dot cluster; other screens have single icon
+        if (pagerState.currentPage == 3 && !isDesignMode) {
+          // Study Mode: AI and Plus icon combined in a sleek vertical 3-dot line
+          StudyModeThreeDotActionLine(
+            onOpenAi = { showAiChatDialog = true },
+            onUploadPdf = { studyPdfUploadTrigger?.invoke() },
+            modifier = Modifier
+              .align(Alignment.BottomEnd)
+              .padding(end = 16.dp, bottom = 16.dp)
+          )
+        } else {
+          // Autopilot / other screens: Only a single clean icon
+          SingleAutopilotAiIcon(
+            onClick = { showAiChatDialog = true },
+            modifier = Modifier
+              .align(Alignment.BottomEnd)
+              .padding(end = 16.dp, bottom = 16.dp)
+          )
+        }
+      }
+    }
+
+    // AI Assistant Dialog triggered from either icon state
+    if (showAiChatDialog) {
       CustomNamedAiFloatingWidget(
         aiName = aiCustomName,
         onAiNameChange = { aiCustomName = it },
         viewModel = workspaceViewModel,
-        modifier = Modifier
-          .align(Alignment.BottomEnd)
-          .padding(end = 16.dp, bottom = 16.dp)
+        initialOpen = true,
+        onDismiss = { showAiChatDialog = false }
       )
     }
   }
+}
 
-  // Instagram-Style Dual Mode Switcher Modal Dialog
-  if (showModeSwitcherSheet) {
-    AlertDialog(
-      onDismissRequest = { showModeSwitcherSheet = false },
-      title = {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(Icons.Default.School, contentDescription = null, tint = NavyPrimary)
-          Spacer(modifier = Modifier.width(8.dp))
-          Text("Switch Workspace (Dual Mode)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-        }
-      },
-      text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          Text(
-            text = "Switch instantly between Polytechnic AI&ML Study Mode and Freelance Designer Studio:",
-            fontSize = 12.sp,
-            color = TextSecondary
-          )
-
-          // Account 1: Polytechnic AI/ML Study Mode
-          Surface(
-            color = if (currentWorkspaceMode == AppWorkspaceMode.STUDY_POLYTECHNIC) NavyLight else CleanSurfaceVariant,
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(
-              if (currentWorkspaceMode == AppWorkspaceMode.STUDY_POLYTECHNIC) 2.dp else 1.dp,
-              if (currentWorkspaceMode == AppWorkspaceMode.STUDY_POLYTECHNIC) NavyPrimary else CleanOutline
-            ),
-            modifier = Modifier
-              .fillMaxWidth()
-              .combinedClickable(
-                onClick = {
-                  workspaceViewModel.switchWorkspaceMode(AppWorkspaceMode.STUDY_POLYTECHNIC)
-                  Toast.makeText(context, "Switched to Polytechnic Study Mode", Toast.LENGTH_SHORT).show()
-                  showModeSwitcherSheet = false
-                }
-              )
-              .testTag("switch_to_study_mode")
-          ) {
-            Row(
-              modifier = Modifier.padding(12.dp),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Box(
-                modifier = Modifier
-                  .size(40.dp)
-                  .background(NavyPrimary, CircleShape),
-                contentAlignment = Alignment.Center
-              ) {
-                Text("🎓", fontSize = 18.sp)
-              }
-
-              Spacer(modifier = Modifier.width(10.dp))
-
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = "Nijo — Polytechnic AI & ML Study",
-                  fontSize = 13.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = TextPrimary
-                )
-                Text(
-                  text = "Sem 1: Maths I, Chemistry, PSPP, Physics (Deadline: Nov 18)",
-                  fontSize = 11.sp,
-                  color = NavyPrimary,
-                  fontWeight = FontWeight.SemiBold
-                )
-              }
-
-              if (currentWorkspaceMode == AppWorkspaceMode.STUDY_POLYTECHNIC) {
-                Icon(Icons.Default.Check, contentDescription = "Active", tint = NavyPrimary)
-              }
-            }
-          }
-
-          // Account 2: Freelance Designer & SMM Mode
-          Surface(
-            color = if (currentWorkspaceMode == AppWorkspaceMode.FREELANCE_DESIGNER) VividVioletLight else CleanSurfaceVariant,
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(
-              if (currentWorkspaceMode == AppWorkspaceMode.FREELANCE_DESIGNER) 2.dp else 1.dp,
-              if (currentWorkspaceMode == AppWorkspaceMode.FREELANCE_DESIGNER) VividViolet else CleanOutline
-            ),
-            modifier = Modifier
-              .fillMaxWidth()
-              .combinedClickable(
-                onClick = {
-                  workspaceViewModel.switchWorkspaceMode(AppWorkspaceMode.FREELANCE_DESIGNER)
-                  Toast.makeText(context, "Switched to Freelance Designer (Libra) Studio", Toast.LENGTH_SHORT).show()
-                  showModeSwitcherSheet = false
-                }
-              )
-              .testTag("switch_to_designer_mode")
-          ) {
-            Row(
-              modifier = Modifier.padding(12.dp),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Box(
-                modifier = Modifier
-                  .size(40.dp)
-                  .background(VividViolet, CircleShape),
-                contentAlignment = Alignment.Center
-              ) {
-                Text("🎨", fontSize = 18.sp)
-              }
-
-              Spacer(modifier = Modifier.width(10.dp))
-
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = "Nijo — Freelance Designer & SMM",
-                  fontSize = 13.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = TextPrimary
-                )
-                Text(
-                  text = "Client: Libra Brand Master Kit | Instagram Reels & AI Prompts",
-                  fontSize = 11.sp,
-                  color = VividViolet,
-                  fontWeight = FontWeight.SemiBold
-                )
-              }
-
-              if (currentWorkspaceMode == AppWorkspaceMode.FREELANCE_DESIGNER) {
-                Icon(Icons.Default.Check, contentDescription = "Active", tint = VividViolet)
-              }
-            }
-          }
-        }
-      },
-      confirmButton = {
-        TextButton(onClick = { showModeSwitcherSheet = false }) {
-          Text("Close", color = TextMuted, fontWeight = FontWeight.Bold)
-        }
+/**
+ * Study Mode Floating Action Line:
+ * Combines AI Tutor + 3 dots line + Plus (+) icon in a vertical stack.
+ */
+@Composable
+private fun StudyModeThreeDotActionLine(
+  onOpenAi: () -> Unit,
+  onUploadPdf: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  Surface(
+    shape = RoundedCornerShape(26.dp),
+    color = Color.White,
+    shadowElevation = 6.dp,
+    border = androidx.compose.foundation.BorderStroke(1.5.dp, NavyPrimary.copy(alpha = 0.3f)),
+    modifier = modifier.testTag("study_three_dot_cluster")
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+      // 1. AI Tutor Icon Button
+      Box(
+        modifier = Modifier
+          .size(42.dp)
+          .background(NavyPrimary, CircleShape)
+          .clickable { onOpenAi() }
+          .testTag("study_ai_tutor_btn"),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          Icons.Default.AutoAwesome,
+          contentDescription = "AI Study Tutor",
+          tint = NeonMint,
+          modifier = Modifier.size(20.dp)
+        )
       }
-    )
+
+      // 2. Three Vertical Dots Line Indicator
+      Icon(
+        Icons.Default.MoreVert,
+        contentDescription = null,
+        tint = NavyPrimary.copy(alpha = 0.6f),
+        modifier = Modifier.size(16.dp)
+      )
+
+      // 3. Plus (+) Syllabus PDF Upload Button
+      Box(
+        modifier = Modifier
+          .size(42.dp)
+          .background(NavyPrimary, CircleShape)
+          .clickable { onUploadPdf() }
+          .testTag("study_plus_upload_btn"),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          Icons.Default.Add,
+          contentDescription = "Upload Syllabus PDF",
+          tint = Color.White,
+          modifier = Modifier.size(22.dp)
+        )
+      }
+    }
   }
+}
 
-  // Clean Minimalist Settings Dialog (Strictly English & Navy Blue)
-  if (showSettingsDialog) {
-    var pinToEdit by remember { mutableStateOf(transferPin) }
-
-    AlertDialog(
-      onDismissRequest = { showSettingsDialog = false },
-      title = {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(Icons.Default.Settings, contentDescription = null, tint = NavyPrimary)
-          Spacer(modifier = Modifier.width(8.dp))
-          Text("Settings & Profile", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-        }
-      },
-      text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          Text("Security Transfer PIN:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-          OutlinedTextField(
-            value = pinToEdit,
-            onValueChange = { pinToEdit = it },
-            label = { Text("4-digit PIN (e.g. 8492)") },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedBorderColor = NavyPrimary,
-              unfocusedBorderColor = CleanOutline
-            ),
-            modifier = Modifier.fillMaxWidth().testTag("settings_pin_input")
-          )
-
-          Button(
-            onClick = {
-              workspaceViewModel.updateTransferSecurityPin(pinToEdit.trim())
-              Toast.makeText(context, "Security PIN updated", Toast.LENGTH_SHORT).show()
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-            modifier = Modifier.fillMaxWidth().testTag("save_settings_pin_btn")
-          ) {
-            Text("Save PIN", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-          }
-
-          Spacer(modifier = Modifier.height(4.dp))
-          Text("App Information:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-
-          Surface(
-            color = CleanSurfaceVariant,
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              Text("NIJO PVT Workspace (Mobile Edition)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
-              Text("Version 2.4.0 • Dedicated Personal App", fontSize = 10.5.sp, color = TextSecondary)
-              Text("Modules: Today (Tasks) · Calendar · Files · Study & Design", fontSize = 10.5.sp, color = TextSecondary)
-            }
-          }
-
-          Spacer(modifier = Modifier.height(4.dp))
-          OutlinedButton(
-            onClick = {
-              onSignOut()
-              showSettingsDialog = false
-            },
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = NavyPrimary),
-            modifier = Modifier.fillMaxWidth().testTag("settings_sign_out_btn")
-          ) {
-            Text("Sign Out", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-          }
-        }
-      },
-      confirmButton = {
-        TextButton(onClick = { showSettingsDialog = false }) {
-          Text("Done", color = NavyPrimary, fontWeight = FontWeight.Bold)
-        }
-      }
-    )
+/**
+ * Autopilot / Non-Study Mode:
+ * Single clean circular floating AI icon.
+ */
+@Composable
+private fun SingleAutopilotAiIcon(
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  Surface(
+    shape = CircleShape,
+    color = Color.White,
+    shadowElevation = 6.dp,
+    border = androidx.compose.foundation.BorderStroke(1.5.dp, NavyPrimary.copy(alpha = 0.3f)),
+    modifier = modifier
+      .size(48.dp)
+      .clickable { onClick() }
+      .testTag("single_autopilot_ai_fab")
+  ) {
+    Box(contentAlignment = Alignment.Center) {
+      Icon(
+        Icons.Default.AutoAwesome,
+        contentDescription = "AI Copilot",
+        tint = NavyPrimary,
+        modifier = Modifier.size(22.dp)
+      )
+    }
   }
 }

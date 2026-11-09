@@ -28,10 +28,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import com.example.util.AudioRecorderHelper
+import com.example.util.DriveBackupHelper
+import java.io.File
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -71,6 +80,8 @@ import com.example.ui.theme.CleanBackground
 import com.example.ui.theme.CleanOutline
 import com.example.ui.theme.CleanSurface
 import com.example.ui.theme.CleanSurfaceVariant
+import com.example.ui.theme.ManropeFontFamily
+import com.example.ui.theme.NavyAccent
 import com.example.ui.theme.NavyLight
 import com.example.ui.theme.NavyPrimary
 import com.example.ui.theme.NavySecondary
@@ -148,6 +159,7 @@ fun TasksScreen(
           Text(
             text = if (isDesignMode) "Tasks" else "Tasks & Schedule",
             fontSize = 20.sp,
+            fontFamily = ManropeFontFamily,
             fontWeight = FontWeight.Bold,
             color = NavyPrimary
           )
@@ -159,6 +171,19 @@ fun TasksScreen(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          IconButton(
+            onClick = {
+              val backupList = (uiState as? WorkspaceUiState.Success)?.items ?: emptyList()
+              DriveBackupHelper.exportToGoogleDrive(context, backupList)
+            },
+            modifier = Modifier
+              .size(36.dp)
+              .background(NavyLight, CircleShape)
+              .testTag("google_drive_backup_btn")
+          ) {
+            Icon(Icons.Default.CloudUpload, contentDescription = "Backup to Google Drive", tint = NavyPrimary, modifier = Modifier.size(18.dp))
+          }
+
           IconButton(
             onClick = {
               triggerVibration(60L)
@@ -342,26 +367,189 @@ fun TasksScreen(
       }
     }
 
-    // Voice Dictation Dialog (English)
+    // Voice Recording & Playback Dialog (Records real voice, allows playback, saves audio note)
     if (showVoiceDialog) {
-      var voiceTextInput by remember { mutableStateOf("Libra brand guideline review tomorrow") }
+      var isRecording by remember { mutableStateOf(false) }
+      var recordedAudioFile by remember { mutableStateOf<File?>(null) }
+      var isPlayingAudio by remember { mutableStateOf(false) }
+      var elapsedSeconds by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+      var noteTitle by remember { mutableStateOf("") }
+
+      // Timer effect when recording
+      androidx.compose.runtime.LaunchedEffect(isRecording) {
+        if (isRecording) {
+          elapsedSeconds = 0
+          while (isRecording) {
+            kotlinx.coroutines.delay(1000)
+            elapsedSeconds++
+          }
+        }
+      }
+
+      val recordPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+      ) { granted ->
+        if (granted) {
+          val res = AudioRecorderHelper.startRecording(context)
+          if (res.isSuccess) {
+            isRecording = true
+            triggerVibration(70L)
+          } else {
+            Toast.makeText(context, "Could not start mic recording", Toast.LENGTH_SHORT).show()
+          }
+        } else {
+          Toast.makeText(context, "Microphone permission needed to record voice note", Toast.LENGTH_SHORT).show()
+        }
+      }
 
       AlertDialog(
-        onDismissRequest = { showVoiceDialog = false },
+        onDismissRequest = {
+          if (isRecording) {
+            AudioRecorderHelper.stopRecording()
+          }
+          AudioRecorderHelper.stopPlayback()
+          showVoiceDialog = false
+        },
         title = {
           Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Mic, contentDescription = null, tint = NavyPrimary)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Voice Task Input", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("Voice Note & Recording", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = NavyPrimary)
           }
         },
         text = {
-          Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Speak or type task details to automatically add with vibration alert:", fontSize = 12.sp, color = TextSecondary)
+          Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+              text = "Record your voice to create an audio note. You can listen back to your recording before saving.",
+              fontSize = 12.sp,
+              color = TextSecondary
+            )
+
+            // Recording status & visual timer
+            Surface(
+              color = if (isRecording) Color(0x22E11D48) else CleanSurfaceVariant,
+              shape = RoundedCornerShape(10.dp),
+              border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                if (isRecording) Color(0xFFE11D48) else CleanOutline
+              ),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Row(
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Box(
+                    modifier = Modifier
+                      .size(10.dp)
+                      .background(
+                        if (isRecording) Color(0xFFE11D48) else if (recordedAudioFile != null) Color(0xFF007A50) else Color.Gray,
+                        CircleShape
+                      )
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(
+                    text = when {
+                      isRecording -> "Recording (${String.format(java.util.Locale.US, "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)})"
+                      recordedAudioFile != null -> "Recorded Audio Saved (${recordedAudioFile?.name?.takeLast(12)})"
+                      else -> "Mic Ready to Record"
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isRecording) Color(0xFFE11D48) else TextPrimary
+                  )
+                }
+
+                Button(
+                  onClick = {
+                    if (isRecording) {
+                      val file = AudioRecorderHelper.stopRecording()
+                      isRecording = false
+                      recordedAudioFile = file
+                      triggerVibration(50L)
+                      if (noteTitle.isBlank()) {
+                        noteTitle = "Voice Task " + java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+                      }
+                    } else {
+                      try {
+                        recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                      } catch (_: Exception) {
+                        val res = AudioRecorderHelper.startRecording(context)
+                        if (res.isSuccess) isRecording = true
+                      }
+                    }
+                  },
+                  colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isRecording) Color(0xFFE11D48) else NavyPrimary
+                  ),
+                  shape = RoundedCornerShape(8.dp),
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                  modifier = Modifier.height(34.dp).testTag("record_toggle_btn")
+                ) {
+                  Text(if (isRecording) "Stop ⏹" else "Record 🎙", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+              }
+            }
+
+            // Playback controls if audio recorded
+            if (recordedAudioFile != null && !isRecording) {
+              Surface(
+                color = NavyLight,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+              ) {
+                Row(
+                  modifier = Modifier.padding(10.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                      if (isPlayingAudio) Icons.Default.Stop else Icons.Default.PlayArrow,
+                      contentDescription = null,
+                      tint = NavyPrimary,
+                      modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                      text = if (isPlayingAudio) "Playing audio..." else "Listen to your recording",
+                      fontSize = 11.5.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = NavyPrimary
+                    )
+                  }
+
+                  Button(
+                    onClick = {
+                      val file = recordedAudioFile ?: return@Button
+                      if (isPlayingAudio) {
+                        AudioRecorderHelper.stopPlayback()
+                        isPlayingAudio = false
+                      } else {
+                        isPlayingAudio = true
+                        AudioRecorderHelper.playAudio(file) {
+                          isPlayingAudio = false
+                        }
+                      }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp).testTag("play_recording_btn")
+                  ) {
+                    Text(if (isPlayingAudio) "Stop" else "▶ Play", fontSize = 10.5.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                  }
+                }
+              }
+            }
+
             OutlinedTextField(
-              value = voiceTextInput,
-              onValueChange = { voiceTextInput = it },
-              label = { Text("Task description") },
+              value = noteTitle,
+              onValueChange = { noteTitle = it },
+              label = { Text("Task / Audio Note Title") },
+              singleLine = true,
               modifier = Modifier.fillMaxWidth().testTag("voice_input_field"),
               colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = NavyPrimary,
@@ -373,19 +561,25 @@ fun TasksScreen(
         confirmButton = {
           Button(
             onClick = {
-              if (voiceTextInput.isNotBlank()) {
-                triggerVibration(100L)
-                val isLibra = voiceTextInput.contains("libra", ignoreCase = true)
-                val newItem = WorkspaceItem(
-                  type = ItemType.TASK.name,
-                  title = voiceTextInput.trim(),
-                  content = "Voice captured task",
-                  priority = ItemPriority.MEDIUM.name,
-                  tags = listOf("task", if (isLibra) "libra" else "general")
-                )
-                viewModel.createItem(newItem)
-                showVoiceDialog = false
+              if (isRecording) {
+                AudioRecorderHelper.stopRecording()
               }
+              AudioRecorderHelper.stopPlayback()
+              val titleToSave = noteTitle.trim().ifBlank {
+                "Voice Task " + java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+              }
+              triggerVibration(100L)
+              val newItem = WorkspaceItem(
+                type = ItemType.TASK.name,
+                title = titleToSave,
+                content = if (recordedAudioFile != null) "Audio voice note recorded" else "Voice captured task",
+                imageUrl = recordedAudioFile?.absolutePath,
+                priority = ItemPriority.HIGH.name,
+                tags = listOf("task", "audio_note", "voice")
+              )
+              viewModel.createItem(newItem)
+              showVoiceDialog = false
+              Toast.makeText(context, "Saved voice task: $titleToSave", Toast.LENGTH_SHORT).show()
             },
             colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
             modifier = Modifier.testTag("confirm_voice_task_btn")
@@ -394,7 +588,11 @@ fun TasksScreen(
           }
         },
         dismissButton = {
-          TextButton(onClick = { showVoiceDialog = false }) {
+          TextButton(onClick = {
+            if (isRecording) AudioRecorderHelper.stopRecording()
+            AudioRecorderHelper.stopPlayback()
+            showVoiceDialog = false
+          }) {
             Text("Cancel", color = TextMuted)
           }
         }
@@ -436,67 +634,176 @@ private fun TaskItemRow(
   onEdit: () -> Unit,
   onDelete: () -> Unit
 ) {
+  val priorityColor = when (task.priority.uppercase()) {
+    ItemPriority.HIGH.name, "HIGH" -> Color(0xFFDC2626)
+    ItemPriority.MEDIUM.name, "MEDIUM" -> Color(0xFFD97706)
+    ItemPriority.LOW.name, "LOW" -> Color(0xFF16A34A)
+    else -> Color(0xFF2563EB)
+  }
+
   Card(
-    shape = RoundedCornerShape(10.dp),
-    colors = CardDefaults.cardColors(containerColor = CleanSurface),
-    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    shape = RoundedCornerShape(14.dp),
+    colors = CardDefaults.cardColors(
+      containerColor = if (task.isCompleted) Color(0xFFF8FAFC) else CleanSurface
+    ),
+    elevation = CardDefaults.cardElevation(defaultElevation = if (task.isCompleted) 0.dp else 1.5.dp),
     modifier = Modifier
       .fillMaxWidth()
-      .border(1.dp, CleanOutline, RoundedCornerShape(10.dp))
+      .border(
+        width = 1.dp,
+        color = if (task.isCompleted) CleanOutline.copy(alpha = 0.5f) else CleanOutline,
+        shape = RoundedCornerShape(14.dp)
+      )
       .testTag("task_card_${task.id}")
   ) {
     Row(
       modifier = Modifier
         .fillMaxWidth()
-        .padding(12.dp),
+        .padding(horizontal = 12.dp, vertical = 10.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      Checkbox(
-        checked = task.isCompleted,
-        onCheckedChange = { onToggleDone(task.copy(isCompleted = it)) },
-        colors = CheckboxDefaults.colors(
-          checkedColor = NavyPrimary,
-          uncheckedColor = CleanOutline
-        ),
-        modifier = Modifier.testTag("checkbox_${task.id}")
+      // Left Priority Accent Strip
+      Box(
+        modifier = Modifier
+          .width(4.dp)
+          .height(38.dp)
+          .background(
+            if (task.isCompleted) Color(0xFFCBD5E1) else priorityColor,
+            RoundedCornerShape(2.dp)
+          )
       )
 
-      Spacer(modifier = Modifier.width(8.dp))
+      Spacer(modifier = Modifier.width(10.dp))
 
+      // Touch-Friendly Checkbox Target (>= 48dp)
+      Box(
+        modifier = Modifier
+          .size(48.dp)
+          .clickable { onToggleDone(task.copy(isCompleted = !task.isCompleted)) },
+        contentAlignment = Alignment.Center
+      ) {
+        Checkbox(
+          checked = task.isCompleted,
+          onCheckedChange = { onToggleDone(task.copy(isCompleted = it)) },
+          colors = CheckboxDefaults.colors(
+            checkedColor = NavyPrimary,
+            uncheckedColor = CleanOutline
+          ),
+          modifier = Modifier.testTag("checkbox_${task.id}")
+        )
+      }
+
+      Spacer(modifier = Modifier.width(4.dp))
+
+      // Center Task Details
       Column(modifier = Modifier.weight(1f)) {
         Text(
           text = task.title,
           fontSize = 14.sp,
+          fontFamily = ManropeFontFamily,
           fontWeight = FontWeight.SemiBold,
           color = if (task.isCompleted) TextMuted else TextPrimary,
-          textDecoration = if (task.isCompleted) TextDecoration.LineThrough else TextDecoration.None
+          textDecoration = if (task.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+          maxLines = 2
         )
 
         if (task.content.isNotBlank()) {
           Spacer(modifier = Modifier.height(2.dp))
-          Text(text = task.content, fontSize = 11.5.sp, color = TextSecondary, maxLines = 1)
+          Text(
+            text = task.content,
+            fontSize = 11.5.sp,
+            color = if (task.isCompleted) TextMuted.copy(alpha = 0.7f) else TextSecondary,
+            maxLines = 1
+          )
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          task.tags.take(3).forEach { tag ->
-            Box(
-              modifier = Modifier
-                .background(CleanSurfaceVariant, RoundedCornerShape(4.dp))
-                .padding(horizontal = 6.dp, vertical = 2.dp)
+        // Voice Note Player Pill
+        if (task.tags.contains("audio_note") && !task.imageUrl.isNullOrBlank()) {
+          var isPlayingThis by remember { mutableStateOf(false) }
+          Spacer(modifier = Modifier.height(4.dp))
+          Surface(
+            color = NavyLight,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.clickable {
+              val audioFile = File(task.imageUrl)
+              if (isPlayingThis) {
+                AudioRecorderHelper.stopPlayback()
+                isPlayingThis = false
+              } else {
+                isPlayingThis = true
+                AudioRecorderHelper.playAudio(audioFile) {
+                  isPlayingThis = false
+                }
+              }
+            }
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+              verticalAlignment = Alignment.CenterVertically
             ) {
-              Text(text = "#$tag", fontSize = 10.sp, color = TextSecondary)
+              Icon(
+                imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                contentDescription = null,
+                tint = NavyPrimary,
+                modifier = Modifier.size(13.dp)
+              )
+              Spacer(modifier = Modifier.width(4.dp))
+              Text(
+                text = if (isPlayingThis) "Playing voice..." else "Voice Memo",
+                fontSize = 10.5.sp,
+                fontFamily = ManropeFontFamily,
+                fontWeight = FontWeight.Bold,
+                color = NavyPrimary
+              )
+            }
+          }
+        }
+
+        // Tag Badges
+        if (task.tags.isNotEmpty()) {
+          Spacer(modifier = Modifier.height(4.dp))
+          Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            task.tags.take(3).forEach { tag ->
+              Surface(
+                color = CleanSurfaceVariant,
+                shape = RoundedCornerShape(4.dp)
+              ) {
+                Text(
+                  text = "#$tag",
+                  fontSize = 9.5.sp,
+                  fontFamily = ManropeFontFamily,
+                  color = TextSecondary,
+                  modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
+                )
+              }
             }
           }
         }
       }
 
-      IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-        Icon(Icons.Default.Edit, contentDescription = "Edit", tint = TextSecondary, modifier = Modifier.size(16.dp))
+      // Actions: Edit & Delete with minimum 48dp touch targets
+      IconButton(
+        onClick = onEdit,
+        modifier = Modifier.size(40.dp)
+      ) {
+        Icon(
+          imageVector = Icons.Default.Edit,
+          contentDescription = "Edit",
+          tint = TextSecondary,
+          modifier = Modifier.size(17.dp)
+        )
       }
 
-      IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted, modifier = Modifier.size(16.dp))
+      IconButton(
+        onClick = onDelete,
+        modifier = Modifier.size(40.dp)
+      ) {
+        Icon(
+          imageVector = Icons.Default.Delete,
+          contentDescription = "Delete",
+          tint = TextMuted,
+          modifier = Modifier.size(17.dp)
+        )
       }
     }
   }

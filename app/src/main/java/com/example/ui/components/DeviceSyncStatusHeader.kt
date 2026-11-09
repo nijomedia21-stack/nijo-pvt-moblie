@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -71,6 +73,9 @@ enum class DeviceDisplayMode {
 fun DeviceSyncStatusHeader(
   currentMode: DeviceDisplayMode,
   workspaceMode: AppWorkspaceMode,
+  pendingSyncCount: Int = 0,
+  syncStatus: String = "Synced",
+  onSyncClicked: () -> Unit = {},
   onModeChanged: (DeviceDisplayMode) -> Unit,
   onOpenModeSwitcher: () -> Unit,
   onOpenSettings: () -> Unit,
@@ -155,6 +160,29 @@ fun DeviceSyncStatusHeader(
       }
 
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Luxury Cloud Sync & Offline Status Chip
+        Surface(
+          color = if (pendingSyncCount > 0) Color(0xFF1E3A5F) else Color.White.copy(alpha = 0.12f),
+          shape = RoundedCornerShape(12.dp),
+          border = if (pendingSyncCount > 0) androidx.compose.foundation.BorderStroke(1.dp, NeonMint.copy(alpha = 0.8f)) else null,
+          modifier = Modifier.clickable(onClick = onSyncClicked).testTag("header_sync_chip")
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            if (pendingSyncCount > 0) {
+              Icon(Icons.Default.Sync, contentDescription = "Syncing", tint = NeonMint, modifier = Modifier.size(11.dp))
+              Spacer(modifier = Modifier.width(3.dp))
+              Text("$pendingSyncCount offline", fontSize = 9.5.sp, color = NeonMint, fontWeight = FontWeight.Bold)
+            } else {
+              Box(modifier = Modifier.size(5.dp).background(NeonMint, CircleShape))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text(syncStatus, fontSize = 9.sp, color = Color.White.copy(alpha = 0.9f), fontWeight = FontWeight.Medium)
+            }
+          }
+        }
+
         // Settings Button
         IconButton(
           onClick = onOpenSettings,

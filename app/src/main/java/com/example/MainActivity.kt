@@ -50,10 +50,14 @@ fun OmniSyncRoot() {
   val credentialManager = remember { CredentialManager.create(context) }
 
   var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
+  var isOfflineModeActive by remember { mutableStateOf(false) }
 
   DisposableEffect(Unit) {
     val listener = FirebaseAuth.AuthStateListener { auth ->
       currentUser = auth.currentUser
+      if (auth.currentUser != null) {
+        isOfflineModeActive = false
+      }
     }
     Firebase.auth.addAuthStateListener(listener)
     onDispose {
@@ -62,14 +66,18 @@ fun OmniSyncRoot() {
   }
 
   Box(modifier = Modifier.fillMaxSize()) {
-    if (currentUser == null) {
+    if (currentUser == null && !isOfflineModeActive) {
       AuthScreen(
         onAuthSuccess = {
           currentUser = Firebase.auth.currentUser
+          isOfflineModeActive = false
+        },
+        onContinueOffline = {
+          isOfflineModeActive = true
         }
       )
     } else {
-      val repository = remember(currentUser?.uid) {
+      val repository = remember(currentUser?.uid, isOfflineModeActive) {
         com.example.data.repository.WorkspaceRepository(context)
       }
       val workspaceViewModel = remember(repository) {
@@ -79,14 +87,19 @@ fun OmniSyncRoot() {
       AdaptiveWorkspaceApp(
         workspaceViewModel = workspaceViewModel,
         onSignOut = {
-          AuthManager.signOut(
-            context = context,
-            credentialManager = credentialManager,
-            onSignOutComplete = {
-              currentUser = null
-            },
-            scope = coroutineScope
-          )
+          isOfflineModeActive = false
+          if (currentUser != null) {
+            AuthManager.signOut(
+              context = context,
+              credentialManager = credentialManager,
+              onSignOutComplete = {
+                currentUser = null
+              },
+              scope = coroutineScope
+            )
+          } else {
+            currentUser = null
+          }
         }
       )
     }

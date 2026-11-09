@@ -96,18 +96,19 @@ class WorkspaceRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
   @Test
   fun unauthenticatedUser_failsWithPermissionDenied(): Unit = runBlocking {
+    val testUid = signInTestUser(ALICE_EMAIL)
+    org.junit.Assume.assumeTrue("Firebase emulator must be running", testUid.isNotBlank())
     auth.signOut()
-    val repo = WorkspaceRepository(firestore)
-
-    var exceptionCaught: Exception? = null
+    var exceptionThrown: FirebaseFirestoreException? = null
     try {
       withTimeout(3000L) {
-        repo.observeItems().first()
+        firestore.collection("users").document(testUid).collection("items").document("test_item").get().await()
       }
     } catch (e: Exception) {
-      exceptionCaught = e
+      exceptionThrown = e.unwrapFirestoreException()
     }
-    assertNotNull(exceptionCaught)
+    assertNotNull(exceptionThrown)
+    assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, exceptionThrown?.code)
   }
 
   companion object {

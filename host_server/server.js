@@ -121,11 +121,46 @@ app.get('/api/state', (req, res) => {
   });
 });
 
-// Upload handler (supports both /upload and /api/upload)
+// Upload handler (supports /upload, /api/upload, and Base64 fallbacks)
 const handleUpload = (req, res) => {
-  const file = req.file || (req.files && req.files.length > 0 ? req.files[0] : null);
+  let file = req.file;
+  if (!file && req.files) {
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      file = req.files[0];
+    } else if (typeof req.files === 'object') {
+      const allFiles = Object.values(req.files).flat();
+      if (allFiles.length > 0) file = allFiles[0];
+    }
+  }
+
+  // Resilient fallback: Support base64 or raw body payloads if multipart parser misses the file
+  if (!file && req.body && (req.body.fileBase64 || req.body.fileContent || req.body.content)) {
+    try {
+      const rawName = req.body.fileName || req.body.name || req.headers['x-filename'] || `file_${Date.now()}.bin`;
+      const cleanName = path.basename(rawName);
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      const storedFilename = `${uniqueSuffix}-${cleanName}`;
+      const destPath = path.join(UPLOADS_DIR, storedFilename);
+      if (req.body.fileBase64) {
+        fs.writeFileSync(destPath, Buffer.from(req.body.fileBase64, 'base64'));
+      } else {
+        fs.writeFileSync(destPath, req.body.fileContent || req.body.content, 'utf8');
+      }
+      const stat = fs.statSync(destPath);
+      file = {
+        originalname: cleanName,
+        filename: storedFilename,
+        size: stat.size,
+        mimetype: 'application/octet-stream',
+        path: destPath
+      };
+    } catch (e) {
+      console.error('[-] Fallback upload error:', e.message);
+    }
+  }
+
   if (!file) {
-    console.log('[Upload 400] No file parsed. Content-Type:', req.headers['content-type'], 'Body keys:', Object.keys(req.body));
+    console.log('[Upload 400] No file parsed. Content-Type:', req.headers['content-type'], 'Body keys:', Object.keys(req.body || {}));
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
@@ -137,7 +172,7 @@ const handleUpload = (req, res) => {
     name: file.originalname,
     storedFilename: file.filename,
     size: file.size,
-    mimeType: file.mimetype,
+    mimeType: file.mimetype || 'application/octet-stream',
     sender,
     target,
     url: `/uploads/${file.filename}`,
@@ -164,12 +199,46 @@ const handleUpload = (req, res) => {
   io.emit('file:added', fileData);
   io.emit('file-transfer', fileData);
 
+  // Broadcast to all active mobile SSE clients so phone saves file immediately
+  for (const sseRes of sseClients) {
+    try {
+      sseRes.write(`data: {"type":"file-transfer","fileName":"${file.originalname}","storedFilename":"${file.filename}","url":"/uploads/${file.filename}","sender":"${sender}","target":"${target}","size":${file.size}}\n\n`);
+    } catch (_) {
+      sseClients.delete(sseRes);
+    }
+  }
+
   console.log(`[+] Successfully received '${file.originalname}' (${file.size} bytes) from ${sender}`);
   res.json({ success: true, file: fileData });
 };
 
 app.post('/upload', upload.any(), handleUpload);
 app.post('/api/upload', upload.any(), handleUpload);
+app.post('/api/upload-raw', express.json({ limit: '100mb' }), handleUpload);
+
+// Download endpoints for Mobile & TV direct file retrieval
+const handleDownload = (req, res) => {
+  const filename = req.params.filename;
+  const targetPath = path.join(UPLOADS_DIR, filename);
+  if (fs.existsSync(targetPath)) {
+    return res.download(targetPath);
+  }
+  const winPath = path.join('C:\\Users\\nijoj\\PVT_Shared_Files', filename);
+  if (fs.existsSync(winPath)) {
+    return res.download(winPath);
+  }
+  try {
+    const allFiles = fs.readdirSync(UPLOADS_DIR);
+    const match = allFiles.find(f => f === filename || f.endsWith('-' + filename));
+    if (match) {
+      return res.download(path.join(UPLOADS_DIR, match));
+    }
+  } catch (_) {}
+  res.status(404).json({ error: 'File not found' });
+};
+
+app.get('/download/:filename', handleDownload);
+app.get('/api/download/:filename', handleDownload);
 
 // Health check endpoint for Mobile & TV connection probes
 app.get('/status', (req, res) => {
@@ -177,15 +246,53 @@ app.get('/status', (req, res) => {
 });
 
 // SSE event stream for live incoming file push
+const sseClients = new Set();
+
 app.get('/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.write(`data: {"type":"connected","time":${Date.now()}}\n\n`);
+  sseClients.add(res);
+
   const keepAlive = setInterval(() => {
-    res.write(`data: {"type":"ping"}\n\n`);
+    try {
+      res.write(`data: {"type":"ping"}\n\n`);
+    } catch (_) {}
   }, 15000);
-  req.on('close', () => clearInterval(keepAlive));
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    sseClients.delete(res);
+  });
+});
+
+// Antigravity Remote System Update Endpoint (Theme, Font & System Notification broadcast)
+app.post('/api/system/update', (req, res) => {
+  const { title, body, themeColor, fontStyle, targetDevice } = req.body;
+  const updatePayload = {
+    type: 'system-update',
+    title: title || 'Antigravity System Update',
+    body: body || 'New theme and UI layout broadcasted from Antigravity Hub',
+    themeColor: themeColor || '#0F294A',
+    fontStyle: fontStyle || 'DEFAULT', // 'TYPEWRITER', 'DEFAULT', 'SERIF'
+    targetDevice: targetDevice || 'all',
+    timestamp: Date.now()
+  };
+
+  // Broadcast to all active mobile SSE clients
+  for (const sseRes of sseClients) {
+    try {
+      sseRes.write(`data: ${JSON.stringify(updatePayload)}\n\n`);
+    } catch (_) {
+      sseClients.delete(sseRes);
+    }
+  }
+
+  // Also broadcast to Socket.io clients (Mobile, TV, Web)
+  io.emit('system:update', updatePayload);
+  console.log(`[+] Broadcasted Antigravity update: "${updatePayload.title}" (Color: ${updatePayload.themeColor}, Font: ${updatePayload.fontStyle})`);
+  res.json({ success: true, update: updatePayload });
 });
 
 // Real-Time Socket.io Synchronization Engine

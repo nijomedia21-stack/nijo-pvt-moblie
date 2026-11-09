@@ -27,6 +27,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +47,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.ManropeFontFamily
+import com.example.ui.theme.NavyAccent
+import com.example.ui.theme.NavyPrimary
 import androidx.credentials.CredentialManager
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.NeonMint
@@ -56,7 +60,8 @@ import com.example.ui.theme.VividViolet
 
 @Composable
 fun AuthScreen(
-  onAuthSuccess: () -> Unit
+  onAuthSuccess: () -> Unit,
+  onContinueOffline: () -> Unit = {}
 ) {
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
@@ -82,9 +87,9 @@ fun AuthScreen(
       .background(
         Brush.verticalGradient(
           colors = listOf(
-            Color(0xFF0A192F),
-            Color(0xFF0F294A),
-            Color(0xFF0A192F)
+            NavyPrimary,
+            NavyAccent,
+            NavyPrimary
           )
         )
       )
@@ -109,13 +114,14 @@ fun AuthScreen(
         // Brand Logo: </> symbol in circle (Logo Only)
         Surface(
           shape = CircleShape,
-          color = Color(0xFF0F294A),
+          color = NavyPrimary,
           modifier = Modifier.size(80.dp)
         ) {
           Box(contentAlignment = Alignment.Center) {
             Text(
               text = "</>",
               fontSize = 28.sp,
+              fontFamily = ManropeFontFamily,
               fontWeight = FontWeight.Black,
               color = Color.White
             )
@@ -127,8 +133,9 @@ fun AuthScreen(
         Text(
           text = "NIJO PVT",
           fontSize = 26.sp,
+          fontFamily = ManropeFontFamily,
           fontWeight = FontWeight.Black,
-          color = Color(0xFF0F294A)
+          color = NavyPrimary
         )
 
         Spacer(modifier = Modifier.height(32.dp))
@@ -170,7 +177,7 @@ fun AuthScreen(
             .height(52.dp)
             .testTag("google_sign_in_button"),
           colors = ButtonDefaults.buttonColors(
-            containerColor = Color(0xFF0F294A),
+            containerColor = NavyPrimary,
             contentColor = Color.White
           ),
           shape = RoundedCornerShape(12.dp)
@@ -185,10 +192,33 @@ fun AuthScreen(
             Text(
               text = "Sign in with Google",
               fontSize = 15.sp,
+              fontFamily = ManropeFontFamily,
               fontWeight = FontWeight.Bold,
               color = Color.White
             )
           }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        OutlinedButton(
+          onClick = onContinueOffline,
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("continue_offline_button"),
+          shape = RoundedCornerShape(12.dp),
+          colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = NavyPrimary
+          )
+        ) {
+          Text(
+            text = "Continue Offline (Local Mode)",
+            fontSize = 13.5.sp,
+            fontFamily = ManropeFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            color = NavyPrimary
+          )
         }
       }
     }
