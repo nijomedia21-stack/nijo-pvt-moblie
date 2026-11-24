@@ -65,6 +65,7 @@ import com.example.ui.components.FreelanceDesignScreen
 import com.example.ui.components.HomeScreen
 import com.example.ui.components.MalayalamCalendarScreen
 import com.example.ui.components.StudyScreen
+import com.example.ui.components.AiChatPane
 import com.example.ui.components.TasksScreen
 import com.example.ui.theme.CleanBackground
 import com.example.ui.theme.CleanOutline
@@ -90,9 +91,78 @@ enum class NijoTab(val title: String) {
   FILES("Static Files")
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * NIJO PVT Mobile = tasks only (no AI on the phone).
+ * Tasks sync through Google sign-in + Firestore (users/{uid}/items), the same
+ * account the PC app uses, so pending tasks show on both devices.
+ */
 @Composable
 fun AdaptiveWorkspaceApp(
+  workspaceViewModel: WorkspaceViewModel,
+  aiChatViewModel: com.example.ui.viewmodel.AiChatViewModel,
+  onSignOut: () -> Unit
+) {
+  val remoteConfig by workspaceViewModel.remoteAppConfig.collectAsState()
+  var showGemini by remember { mutableStateOf(false) }
+  OmniSyncTheme(
+    primaryColorHex = remoteConfig.themeColorHex,
+    fontStyle = remoteConfig.fontStyle
+  ) {
+    Scaffold(
+      modifier = Modifier
+        .fillMaxSize()
+        .background(CleanBackground)
+        .statusBarsPadding()
+        .navigationBarsPadding(),
+      containerColor = CleanBackground,
+      topBar = {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .background(CleanSurface)
+            .border(1.dp, CleanOutline)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(if (showGemini) "NIJO PVT · Gemini" else "NIJO PVT · Tasks", color = TextPrimary, fontSize = 18.sp)
+          androidx.compose.material3.TextButton(onClick = onSignOut) {
+            Text("Sign out", color = TextPrimary, fontSize = 13.sp)
+          }
+        }
+      },
+      bottomBar = {
+        NavigationBar(containerColor = CleanSurface, contentColor = TextPrimary) {
+          NavigationBarItem(
+            selected = !showGemini,
+            onClick = { showGemini = false },
+            icon = { Text("✓", fontSize = 18.sp) },
+            label = { Text("Tasks") }
+          )
+          NavigationBarItem(
+            selected = showGemini,
+            onClick = { showGemini = true },
+            icon = { Text("✦", fontSize = 18.sp) },
+            label = { Text("Gemini") }
+          )
+        }
+      }
+    ) { inner ->
+      Column(modifier = Modifier.padding(inner).fillMaxSize()) {
+        if (showGemini) {
+          AiChatPane(viewModel = aiChatViewModel, modifier = Modifier.fillMaxSize())
+        } else {
+          TasksScreen(viewModel = workspaceViewModel)
+        }
+      }
+    }
+  }
+}
+
+/** Previous full multi-screen app (Home, Calendar, Study, Files, AI) - kept for reference, not shown. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun AdaptiveWorkspaceAppFull(
   workspaceViewModel: WorkspaceViewModel,
   onSignOut: () -> Unit
 ) {

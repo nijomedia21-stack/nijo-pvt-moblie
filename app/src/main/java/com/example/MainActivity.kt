@@ -84,8 +84,13 @@ fun OmniSyncRoot() {
         WorkspaceViewModel(repository)
       }
 
+      val aiChatViewModel = remember(repository) {
+        com.example.ui.viewmodel.AiChatViewModel(repository)
+      }
+
       AdaptiveWorkspaceApp(
         workspaceViewModel = workspaceViewModel,
+        aiChatViewModel = aiChatViewModel,
         onSignOut = {
           isOfflineModeActive = false
           if (currentUser != null) {
