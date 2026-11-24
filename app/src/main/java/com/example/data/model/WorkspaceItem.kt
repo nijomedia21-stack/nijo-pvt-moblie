@@ -30,6 +30,9 @@ data class WorkspaceItem(
   val tags: List<String> = emptyList(),
   val imageUrl: String? = null,
   val aiSummary: String? = null,
+  // Shared with NIJO PVT PC: due date (YYYY-MM-DD) and time (HH:MM) for reminders
+  val dueDate: String? = null,
+  val dueTime: String? = null,
   @ServerTimestamp val createdAt: Timestamp? = null,
   @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -47,6 +50,8 @@ data class WorkspaceItem(
     )
     if (!imageUrl.isNullOrBlank()) map["imageUrl"] = imageUrl
     if (!aiSummary.isNullOrBlank()) map["aiSummary"] = aiSummary
+    if (!dueDate.isNullOrBlank()) map["dueDate"] = dueDate
+    if (!dueTime.isNullOrBlank()) map["dueTime"] = dueTime
     return map
   }
 
@@ -61,6 +66,8 @@ data class WorkspaceItem(
     )
     if (imageUrl != null) map["imageUrl"] = imageUrl
     if (aiSummary != null) map["aiSummary"] = aiSummary
+    if (dueDate != null) map["dueDate"] = dueDate
+    if (dueTime != null) map["dueTime"] = dueTime
     return map
   }
 }

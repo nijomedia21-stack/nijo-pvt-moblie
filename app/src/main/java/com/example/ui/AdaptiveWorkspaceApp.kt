@@ -90,9 +90,56 @@ enum class NijoTab(val title: String) {
   FILES("Static Files")
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * NIJO PVT Mobile = tasks only (no AI on the phone).
+ * Tasks sync through Google sign-in + Firestore (users/{uid}/items), the same
+ * account the PC app uses, so pending tasks show on both devices.
+ */
 @Composable
 fun AdaptiveWorkspaceApp(
+  workspaceViewModel: WorkspaceViewModel,
+  onSignOut: () -> Unit
+) {
+  val remoteConfig by workspaceViewModel.remoteAppConfig.collectAsState()
+  OmniSyncTheme(
+    primaryColorHex = remoteConfig.themeColorHex,
+    fontStyle = remoteConfig.fontStyle
+  ) {
+    Scaffold(
+      modifier = Modifier
+        .fillMaxSize()
+        .background(CleanBackground)
+        .statusBarsPadding()
+        .navigationBarsPadding(),
+      containerColor = CleanBackground,
+      topBar = {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .background(CleanSurface)
+            .border(1.dp, CleanOutline)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text("NIJO PVT · Tasks", color = TextPrimary, fontSize = 18.sp)
+          androidx.compose.material3.TextButton(onClick = onSignOut) {
+            Text("Sign out", color = TextPrimary, fontSize = 13.sp)
+          }
+        }
+      }
+    ) { inner ->
+      Column(modifier = Modifier.padding(inner).fillMaxSize()) {
+        TasksScreen(viewModel = workspaceViewModel)
+      }
+    }
+  }
+}
+
+/** Previous full multi-screen app (Home, Calendar, Study, Files, AI) - kept for reference, not shown. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun AdaptiveWorkspaceAppFull(
   workspaceViewModel: WorkspaceViewModel,
   onSignOut: () -> Unit
 ) {
