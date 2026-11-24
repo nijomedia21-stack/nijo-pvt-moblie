@@ -65,6 +65,7 @@ import com.example.ui.components.FreelanceDesignScreen
 import com.example.ui.components.HomeScreen
 import com.example.ui.components.MalayalamCalendarScreen
 import com.example.ui.components.StudyScreen
+import com.example.ui.components.AiChatPane
 import com.example.ui.components.TasksScreen
 import com.example.ui.theme.CleanBackground
 import com.example.ui.theme.CleanOutline
@@ -98,9 +99,11 @@ enum class NijoTab(val title: String) {
 @Composable
 fun AdaptiveWorkspaceApp(
   workspaceViewModel: WorkspaceViewModel,
+  aiChatViewModel: com.example.ui.viewmodel.AiChatViewModel,
   onSignOut: () -> Unit
 ) {
   val remoteConfig by workspaceViewModel.remoteAppConfig.collectAsState()
+  var showGemini by remember { mutableStateOf(false) }
   OmniSyncTheme(
     primaryColorHex = remoteConfig.themeColorHex,
     fontStyle = remoteConfig.fontStyle
@@ -122,15 +125,35 @@ fun AdaptiveWorkspaceApp(
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          Text("NIJO PVT · Tasks", color = TextPrimary, fontSize = 18.sp)
+          Text(if (showGemini) "NIJO PVT · Gemini" else "NIJO PVT · Tasks", color = TextPrimary, fontSize = 18.sp)
           androidx.compose.material3.TextButton(onClick = onSignOut) {
             Text("Sign out", color = TextPrimary, fontSize = 13.sp)
           }
         }
+      },
+      bottomBar = {
+        NavigationBar(containerColor = CleanSurface, contentColor = TextPrimary) {
+          NavigationBarItem(
+            selected = !showGemini,
+            onClick = { showGemini = false },
+            icon = { Text("✓", fontSize = 18.sp) },
+            label = { Text("Tasks") }
+          )
+          NavigationBarItem(
+            selected = showGemini,
+            onClick = { showGemini = true },
+            icon = { Text("✦", fontSize = 18.sp) },
+            label = { Text("Gemini") }
+          )
+        }
       }
     ) { inner ->
       Column(modifier = Modifier.padding(inner).fillMaxSize()) {
-        TasksScreen(viewModel = workspaceViewModel)
+        if (showGemini) {
+          AiChatPane(viewModel = aiChatViewModel, modifier = Modifier.fillMaxSize())
+        } else {
+          TasksScreen(viewModel = workspaceViewModel)
+        }
       }
     }
   }
